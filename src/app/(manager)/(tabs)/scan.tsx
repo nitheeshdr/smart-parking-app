@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, Alert, TextInput, ScrollView } from 'react-native';
+import { View, Text, StyleSheet, Alert, TextInput, ScrollView, Modal, Pressable } from 'react-native';
+import { CameraView, useCameraPermissions } from 'expo-camera';
 import { Button, Card, Separator, Spinner } from 'heroui-native';
 import { AppIcon } from '../../../components/app-icon';
 import { checkInVehicle, verifyBookingQR } from '../../../features/parking/api/managerApi';
@@ -23,12 +24,17 @@ export default function ManagerScanScreen() {
   const [loading, setLoading] = useState(false);
   const [booking, setBooking] = useState<VerifiedBooking | null>(null);
 
-  const handleVerify = async () => {
-    if (!token.trim()) return;
+  const [permission, requestPermission] = useCameraPermissions();
+  const [showScanner, setShowScanner] = useState(false);
+
+  const handleVerify = async (scannedToken?: string) => {
+    const t = typeof scannedToken === 'string' ? scannedToken : token.trim();
+    if (!t) return;
     setLoading(true);
     try {
-      const data = await verifyBookingQR(token.trim());
+      const data = await verifyBookingQR(t);
       setBooking(data.booking as VerifiedBooking);
+      setShowScanner(false);
     } catch (err) {
       Alert.alert('Verification failed', err instanceof Error ? err.message : 'Please try again.');
     } finally {
@@ -96,7 +102,7 @@ export default function ManagerScanScreen() {
             <Button
               variant="primary"
               isDisabled={!token.trim() || loading}
-              onPress={handleVerify}
+              onPress={() => handleVerify()}
               style={styles.primaryBtn}
             >
               {loading ? (
@@ -107,6 +113,27 @@ export default function ManagerScanScreen() {
                   <Text style={styles.primaryBtnTxt}>Verify Ticket</Text>
                 </View>
               )}
+            </Button>
+            
+            <Button
+              variant="flat"
+              isDisabled={loading}
+              onPress={async () => {
+                if (!permission?.granted) {
+                  const p = await requestPermission();
+                  if (!p.granted) {
+                    Alert.alert('Permission required', 'We need camera access to scan QR codes.');
+                    return;
+                  }
+                }
+                setShowScanner(true);
+              }}
+              style={styles.secondaryBtn}
+            >
+              <View style={styles.btnInner}>
+                <AppIcon name="camera-outline" size={16} color={COLORS.text} />
+                <Text style={styles.secondaryBtnTxt}>Scan QR Code</Text>
+              </View>
             </Button>
           </Card>
         </View>
@@ -177,6 +204,41 @@ export default function ManagerScanScreen() {
           </Button>
         </View>
       )}
+      )}
+
+      {/* QR Scanner Modal */}
+      <Modal visible={showScanner} animationType="slide" presentationStyle="pageSheet">
+        <View style={styles.modalContainer}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>Scan Ticket</Text>
+            <Pressable onPress={() => setShowScanner(false)} style={styles.closeBtn}>
+              <AppIcon name="close" size={24} color={COLORS.text} />
+            </Pressable>
+          </View>
+          
+          <View style={styles.cameraWrap}>
+            {showScanner && (
+              <CameraView 
+                style={StyleSheet.absoluteFill} 
+                barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
+                onBarcodeScanned={({ data }) => {
+                  if (data && !loading) {
+                    setToken(data);
+                    handleVerify(data);
+                  }
+                }}
+              />
+            )}
+            <View style={styles.scannerOverlay}>
+              <View style={styles.scannerTarget} />
+            </View>
+          </View>
+          
+          <View style={styles.modalFooter}>
+            <Text style={styles.modalFooterTxt}>Position the QR code within the frame.</Text>
+          </View>
+        </View>
+      </Modal>
     </ScrollView>
   );
 }
@@ -229,4 +291,14 @@ const styles = StyleSheet.create({
   detailLeft: { flexDirection: 'row', alignItems: 'center', gap: SIZES.sm },
   detailLabel: { fontSize: 14, color: COLORS.textMuted },
   detailValue: { fontSize: 14, fontWeight: '700', color: COLORS.text, textAlign: 'right', flex: 1, marginLeft: SIZES.sm },
+
+  modalContainer: { flex: 1, backgroundColor: COLORS.background },
+  modalHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: SIZES.lg, paddingTop: 60, backgroundColor: COLORS.surface, borderBottomWidth: 1, borderBottomColor: COLORS.border },
+  modalTitle: { fontSize: 20, fontWeight: '800', color: COLORS.text },
+  closeBtn: { padding: 4 },
+  cameraWrap: { flex: 1, position: 'relative' },
+  scannerOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' },
+  scannerTarget: { width: 250, height: 250, borderWidth: 2, borderColor: COLORS.primary, backgroundColor: 'transparent', borderRadius: SIZES.radiusMd },
+  modalFooter: { padding: SIZES.lg, backgroundColor: COLORS.surface, alignItems: 'center' },
+  modalFooterTxt: { fontSize: 14, color: COLORS.textMuted },
 });
