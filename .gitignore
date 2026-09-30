@@ -40,5 +40,6 @@ yarn-error.*
 *.tsbuildinfo
 
 # Generated native folders
-/ios
-/android
+# /ios
+# /android
+.gstack/
