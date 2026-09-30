@@ -99,7 +99,11 @@ export default function CustomerProfileScreen() {
       setVehicleModel('');
       setVehicleColor('');
     } catch (err: any) {
-      Alert.alert('Error', err.message);
+      if (err.code === '23505' || err.message?.includes('duplicate key')) {
+        Alert.alert('Vehicle Exists', 'This vehicle registration number is already added.');
+      } else {
+        Alert.alert('Error', err.message);
+      }
     } finally {
       setSaving(false);
     }
