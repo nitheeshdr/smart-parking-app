@@ -123,6 +123,26 @@ export const createAndPayForBooking = async (input: CreateBookingInput) => {
 
   if (updateError) throw updateError;
 
+  // Mark slot as occupied
+  await supabase
+    .from('parking_slots')
+    .update({ status: 'occupied' })
+    .eq('id', input.slotId);
+
+  // Decrement lot available capacity
+  const { data: lotData } = await supabase
+    .from('parking_lots')
+    .select('available_capacity')
+    .eq('id', input.lotId)
+    .single();
+
+  if (lotData && lotData.available_capacity > 0) {
+    await supabase
+      .from('parking_lots')
+      .update({ available_capacity: lotData.available_capacity - 1 })
+      .eq('id', input.lotId);
+  }
+
   const qrToken = `BKG-${bookingIntent.booking_id.split('-')[0].toUpperCase()}-OK`;
   return { ...bookingIntent, qrToken };
 };

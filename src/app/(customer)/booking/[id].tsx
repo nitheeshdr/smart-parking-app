@@ -6,6 +6,7 @@ import { Card, Separator, Spinner, Button } from 'heroui-native';
 import { AppIcon } from '../../../components/app-icon';
 import { supabase } from '../../../lib/supabase';
 import { COLORS, SIZES } from '../../../constants/theme';
+import QRCode from 'react-native-qrcode-svg';
 
 export default function BookingTicketScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -102,7 +103,12 @@ export default function BookingTicketScreen() {
           {/* QR Token area */}
           <View style={styles.qrWrap}>
             <View style={styles.qrIcon}>
-              <AppIcon name="qr-code-outline" size={72} color={COLORS.text} />
+              <QRCode
+                value={booking.qr_token || booking.id}
+                size={100}
+                color={COLORS.text}
+                backgroundColor="transparent"
+              />
             </View>
             <Text style={styles.qrLbl}>Show this code at the entrance</Text>
             <View style={styles.tokenBox}>
@@ -194,7 +200,7 @@ const styles = StyleSheet.create({
   title: { fontSize: 18, fontWeight: '900', color: COLORS.text },
 
   scroll: { padding: SIZES.lg },
-  ticket: { padding: SIZES.lg, borderWidth: 1, borderColor: COLORS.border },
+  ticket: { padding: SIZES.lg, borderWidth: 1, borderColor: COLORS.border, backgroundColor: COLORS.surface },
 
   ticketTop: { flexDirection: 'row', alignItems: 'center', gap: SIZES.md },
   lotIconWrap: { width: 44, height: 44, borderRadius: 22, backgroundColor: COLORS.primaryLight, justifyContent: 'center', alignItems: 'center' },
