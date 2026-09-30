@@ -115,10 +115,12 @@ export const createAndPayForBooking = async (input: CreateBookingInput) => {
     throw new Error(bookingIntent?.details || bookingIntent?.message || 'Unable to reserve this slot.');
   }
 
+  const qrToken = `BKG-${bookingIntent.booking_id.split('-')[0].toUpperCase()}-OK`;
+
   // Bypass edge function for demo: update booking directly
   const { error: updateError } = await supabase
     .from('bookings')
-    .update({ booking_status: 'completed' })
+    .update({ booking_status: 'completed', payment_status: 'paid', qr_token: qrToken })
     .eq('id', bookingIntent.booking_id);
 
   if (updateError) throw updateError;
@@ -143,6 +145,5 @@ export const createAndPayForBooking = async (input: CreateBookingInput) => {
       .eq('id', input.lotId);
   }
 
-  const qrToken = `BKG-${bookingIntent.booking_id.split('-')[0].toUpperCase()}-OK`;
   return { ...bookingIntent, qrToken };
 };
