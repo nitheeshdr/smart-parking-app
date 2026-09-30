@@ -90,6 +90,7 @@ export default function RootLayout() {
       <GestureHandlerRootView style={{ flex: 1 }}>
         <HeroUINativeProvider>
           <Stack screenOptions={{ headerShown: false }}>
+            <Stack.Screen name="index" options={{ headerShown: false }} />
             <Stack.Screen name="(auth)" options={{ headerShown: false }} />
             <Stack.Screen name="(customer)" options={{ headerShown: false }} />
             <Stack.Screen name="(manager)" options={{ headerShown: false }} />
