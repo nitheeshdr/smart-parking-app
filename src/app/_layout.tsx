@@ -88,7 +88,7 @@ export default function RootLayout() {
   return (
     <QueryClientProvider client={queryClient}>
       <GestureHandlerRootView style={{ flex: 1 }}>
-        <HeroUINativeProvider>
+        <HeroUINativeProvider theme="light">
           <Stack screenOptions={{ headerShown: false }}>
             <Stack.Screen name="index" options={{ headerShown: false }} />
             <Stack.Screen name="(auth)" options={{ headerShown: false }} />
@@ -96,7 +96,7 @@ export default function RootLayout() {
             <Stack.Screen name="(manager)" options={{ headerShown: false }} />
             <Stack.Screen name="(admin)" options={{ headerShown: false }} />
           </Stack>
-          <StatusBar style="auto" />
+          <StatusBar style="dark" />
         </HeroUINativeProvider>
       </GestureHandlerRootView>
     </QueryClientProvider>
