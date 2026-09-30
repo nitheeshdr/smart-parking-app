@@ -73,31 +73,53 @@ export const fetchManagerDashboardStats = async (managerId: string): Promise<Das
 };
 
 export const verifyBookingQR = async (qrPayload: string) => {
-  // This invokes the edge function
-  const { data, error } = await supabase.functions.invoke('verify-qr', {
-    body: { qrPayload }
-  });
+  let { data: booking, error } = await supabase
+    .from('bookings')
+    .select('id, booking_reference, date, start_time, end_time, booking_status, profiles:customer_id(full_name), vehicles:vehicle_id(vehicle_number), parking_slots:parking_slot_id(slot_number), parking_lots:parking_lot_id(name)')
+    .eq('qr_token', qrPayload)
+    .maybeSingle();
+
+  if (!booking) {
+    const { data: bookingById } = await supabase
+      .from('bookings')
+      .select('id, booking_reference, date, start_time, end_time, booking_status, profiles:customer_id(full_name), vehicles:vehicle_id(vehicle_number), parking_slots:parking_slot_id(slot_number), parking_lots:parking_lot_id(name)')
+      .eq('id', qrPayload)
+      .maybeSingle();
+    booking = bookingById;
+  }
+
+  if (error || !booking) throw new Error('Invalid or expired ticket token.');
   
-  if (error) throw error;
-  return data;
+  return { valid: true, booking };
 };
 
 export const checkInVehicle = async (bookingId: string) => {
-  const { data, error } = await supabase.functions.invoke('check-in', {
-    body: { bookingId }
-  });
+  const { error } = await supabase
+    .from('bookings')
+    .update({ booking_status: 'active' })
+    .eq('id', bookingId);
   
   if (error) throw error;
-  return data;
+  return { success: true };
 };
 
 export const checkOutVehicle = async (bookingId: string) => {
-  const { data, error } = await supabase.functions.invoke('check-out', {
-    body: { bookingId }
-  });
+  const { error } = await supabase
+    .from('bookings')
+    .update({ booking_status: 'completed' })
+    .eq('id', bookingId);
   
   if (error) throw error;
-  return data;
+  
+  const { data: booking } = await supabase.from('bookings').select('parking_slot_id, parking_lot_id').eq('id', bookingId).single();
+  if (booking) {
+    await supabase.from('parking_slots').update({ status: 'available' }).eq('id', booking.parking_slot_id);
+    const { data: lot } = await supabase.from('parking_lots').select('available_capacity').eq('id', booking.parking_lot_id).single();
+    if (lot) {
+      await supabase.from('parking_lots').update({ available_capacity: lot.available_capacity + 1 }).eq('id', booking.parking_lot_id);
+    }
+  }
+  return { success: true };
 };
 
 export const fetchManagerRecentBookings = async (managerUserId: string) => {
