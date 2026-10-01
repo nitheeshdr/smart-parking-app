@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, Alert, TextInput, ScrollView, Modal, Pressable 
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { Button, Card, Separator, Spinner } from 'heroui-native';
 import { AppIcon } from '../../../components/app-icon';
-import { checkInVehicle, verifyBookingQR } from '../../../features/parking/api/managerApi';
+import { checkInVehicle, checkOutVehicle, verifyBookingQR } from '../../../features/parking/api/managerApi';
 import { COLORS, SIZES } from '../../../constants/theme';
 
 type VerifiedBooking = {
@@ -52,6 +52,21 @@ export default function ManagerScanScreen() {
       setToken('');
     } catch (err) {
       Alert.alert('Check-in failed', err instanceof Error ? err.message : 'Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleCheckOut = async () => {
+    if (!booking) return;
+    setLoading(true);
+    try {
+      await checkOutVehicle(booking.id);
+      Alert.alert('Exit successful', `Vehicle in slot ${booking.parking_slots?.slot_number ?? ''} has exited and the slot is now available.`);
+      setBooking(null);
+      setToken('');
+    } catch (err) {
+      Alert.alert('Exit failed', err instanceof Error ? err.message : 'Please try again.');
     } finally {
       setLoading(false);
     }
@@ -143,8 +158,14 @@ export default function ManagerScanScreen() {
           <Card style={styles.resultCard}>
             {/* Valid badge */}
             <View style={styles.validBadge}>
-              <AppIcon name="checkmark-circle" size={22} color={COLORS.success} />
-              <Text style={styles.validTxt}>Valid Paid Booking</Text>
+              <AppIcon 
+                name={booking.booking_status === 'active' ? 'car-sport-outline' : 'checkmark-circle'} 
+                size={22} 
+                color={booking.booking_status === 'active' ? COLORS.primary : COLORS.success} 
+              />
+              <Text style={[styles.validTxt, { color: booking.booking_status === 'active' ? COLORS.primary : COLORS.success }]}>
+                {booking.booking_status === 'active' ? 'Vehicle is currently Parked' : 'Valid Paid Booking'}
+              </Text>
             </View>
 
             <Separator style={styles.sep} />
@@ -175,21 +196,39 @@ export default function ManagerScanScreen() {
             ))}
           </Card>
 
-          <Button
-            variant="primary"
-            isDisabled={loading}
-            onPress={handleCheckIn}
-            style={styles.primaryBtn}
-          >
-            {loading ? (
-              <Spinner size="sm" />
-            ) : (
-              <View style={styles.btnInner}>
-                <AppIcon name="checkmark-circle-outline" size={16} color="#fff" />
-                <Text style={styles.primaryBtnTxt}>Confirm Check-In</Text>
-              </View>
-            )}
-          </Button>
+          {booking.booking_status === 'active' ? (
+            <Button
+              variant="primary"
+              isDisabled={loading}
+              onPress={handleCheckOut}
+              style={[styles.primaryBtn, { backgroundColor: COLORS.error }]}
+            >
+              {loading ? (
+                <Spinner size="sm" color="white" />
+              ) : (
+                <View style={styles.btnInner}>
+                  <AppIcon name="log-out-outline" size={16} color="#fff" />
+                  <Text style={styles.primaryBtnTxt}>Confirm Exit</Text>
+                </View>
+              )}
+            </Button>
+          ) : (
+            <Button
+              variant="primary"
+              isDisabled={loading || booking.booking_status === 'past'}
+              onPress={handleCheckIn}
+              style={styles.primaryBtn}
+            >
+              {loading ? (
+                <Spinner size="sm" color="white" />
+              ) : (
+                <View style={styles.btnInner}>
+                  <AppIcon name="log-in-outline" size={16} color="#fff" />
+                  <Text style={styles.primaryBtnTxt}>Confirm Check-In</Text>
+                </View>
+              )}
+            </Button>
+          )}
 
           <Button
             variant="flat"
@@ -283,7 +322,7 @@ const styles = StyleSheet.create({
   secondaryBtnTxt: { color: COLORS.text, fontSize: 15, fontWeight: '700' },
   btnInner: { flexDirection: 'row', alignItems: 'center', gap: 8 },
 
-  resultCard: { padding: SIZES.lg, borderWidth: 1, borderColor: COLORS.success + '40', backgroundColor: COLORS.successLight + '50' },
+  resultCard: { padding: SIZES.lg, borderWidth: 1, borderColor: COLORS.border, backgroundColor: COLORS.surface },
   validBadge: { flexDirection: 'row', alignItems: 'center', gap: SIZES.sm },
   validTxt: { fontSize: 18, fontWeight: '900', color: COLORS.success },
 
