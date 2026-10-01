@@ -16,6 +16,7 @@ import { Button, Card, Separator, Spinner } from 'heroui-native';
 import { AppIcon } from '../../../components/app-icon';
 import { createAndPayForBooking, fetchParkingSlots } from '../../../features/parking/api/parkingApi';
 import { useAuthStore } from '../../../stores/authStore';
+import { supabase } from '../../../lib/supabase';
 import { COLORS, SIZES } from '../../../constants/theme';
 
 const today = new Date().toISOString().slice(0, 10);
@@ -47,11 +48,69 @@ export default function BookParkingScreen() {
     enabled: !!lot_id,
   });
 
+  const { data: bookingsForDate } = useQuery({
+    queryKey: ['lot_bookings_date', lot_id, date],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('bookings')
+        .select('parking_slot_id, start_time, end_time, booking_status')
+        .eq('parking_lot_id', lot_id)
+        .eq('date', date)
+        .neq('booking_status', 'cancelled');
+      if (error) throw error;
+      return data || [];
+    },
+    enabled: !!lot_id && !!date,
+  });
+
+  React.useEffect(() => {
+    if (!lot_id) return;
+    const channel = supabase
+      .channel(`lot_realtime_${lot_id}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'bookings', filter: `parking_lot_id=eq.${lot_id}` },
+        () => {
+          queryClient.invalidateQueries({ queryKey: ['lot_bookings_date', lot_id, date] });
+          queryClient.invalidateQueries({ queryKey: ['slots', lot_id] });
+          queryClient.invalidateQueries({ queryKey: ['my_bookings'] });
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'parking_slots', filter: `parking_lot_id=eq.${lot_id}` },
+        () => {
+          queryClient.invalidateQueries({ queryKey: ['slots', lot_id] });
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [lot_id, date, queryClient]);
+
+  const isSlotBookedForTime = (slotId: string) => {
+    if (!bookingsForDate || bookingsForDate.length === 0) return false;
+    const sStart = startTime.length === 5 ? `${startTime}:00` : startTime;
+    const sEnd = endTime.length === 5 ? `${endTime}:00` : endTime;
+
+    return bookingsForDate.some((b: any) => {
+      if (b.parking_slot_id !== slotId) return false;
+      const bStart = b.start_time;
+      const bEnd = b.end_time;
+      return bStart < sEnd && sStart < bEnd;
+    });
+  };
+
   const selected = useMemo(() => slots?.find((s) => s.id === selectedSlot), [selectedSlot, slots]);
 
   const booking = useMutation({
     mutationFn: () => {
       if (!user?.id || !selected) throw new Error('Select an available slot first.');
+      if (isSlotBookedForTime(selected.id)) {
+        throw new Error('This slot is already booked for the selected time range.');
+      }
       return createAndPayForBooking({
         customerId: user.id, lotId: lot_id, slotId: selected.id,
         vehicleNumber, date, startTime, endTime,
@@ -61,6 +120,7 @@ export default function BookParkingScreen() {
     onSuccess: (result) => {
       queryClient.invalidateQueries({ queryKey: ['my_bookings', user?.id] });
       queryClient.invalidateQueries({ queryKey: ['slots', lot_id] });
+      queryClient.invalidateQueries({ queryKey: ['lot_bookings_date', lot_id, date] });
       router.replace(`/(customer)/booking/${result.booking_id}`);
     },
     onError: (err: Error) => Alert.alert('Booking failed', err.message),
@@ -88,8 +148,8 @@ export default function BookParkingScreen() {
     );
   }
 
-  // Count by status
-  const availableCount = slots.filter((s) => s.status === 'available').length;
+  // Count free slots for the selected date/time
+  const availableCount = slots.filter((s) => s.status === 'available' && !isSlotBookedForTime(s.id)).length;
 
   return (
     <View style={styles.container}>
@@ -122,7 +182,7 @@ export default function BookParkingScreen() {
           {[
             { label: 'Available', bg: COLORS.surface, border: COLORS.border, text: COLORS.text },
             { label: 'Selected', bg: COLORS.primaryLight, border: COLORS.primary, text: COLORS.primary },
-            { label: 'Taken', bg: COLORS.secondaryLight, border: COLORS.border, text: COLORS.textDisabled },
+            { label: 'Taken', bg: COLORS.surfaceHover, border: COLORS.border, text: COLORS.textDisabled },
           ].map((l) => (
             <View key={l.label} style={styles.legendItem}>
               <View style={[styles.legendBox, { backgroundColor: l.bg, borderColor: l.border }]} />
@@ -134,7 +194,8 @@ export default function BookParkingScreen() {
         {/* Slot grid */}
         <View style={styles.grid}>
           {slots.map((slot) => {
-            const isAvailable = slot.status === 'available';
+            const isBooked = isSlotBookedForTime(slot.id);
+            const isAvailable = slot.status === 'available' && !isBooked;
             const isSelected = selectedSlot === slot.id;
             const icon = SLOT_ICON[slot.slot_type as SlotType] ?? 'car-outline';
             return (
@@ -148,7 +209,7 @@ export default function BookParkingScreen() {
                   isSelected && styles.slotCellSelected,
                 ]}
                 accessibilityRole="button"
-                accessibilityLabel={`Slot ${slot.slot_number}, ${slot.status}`}
+                accessibilityLabel={`Slot ${slot.slot_number}, ${isAvailable ? 'available' : 'taken'}`}
               >
                 <AppIcon
                   name={icon}
@@ -167,7 +228,7 @@ export default function BookParkingScreen() {
                   !isAvailable && styles.slotNumTaken,
                   isSelected && { color: COLORS.primary },
                 ]}>
-                  {slot.slot_type}
+                  {isBooked ? 'Booked' : slot.slot_type}
                 </Text>
               </Pressable>
             );
@@ -322,7 +383,7 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.surface, borderWidth: 1.5, borderColor: COLORS.border,
     alignItems: 'center', justifyContent: 'center', gap: 4,
   },
-  slotCellTaken: { backgroundColor: COLORS.secondaryLight, opacity: 0.5 },
+  slotCellTaken: { backgroundColor: COLORS.surfaceHover, opacity: 0.5 },
   slotCellSelected: { backgroundColor: COLORS.primaryLight, borderColor: COLORS.primary, borderWidth: 2 },
   slotNum: { fontSize: 15, fontWeight: '900', color: COLORS.text },
   slotNumTaken: { color: COLORS.textDisabled },
@@ -331,7 +392,7 @@ const styles = StyleSheet.create({
 
   sep: { marginVertical: SIZES.md },
 
-  formCard: { padding: SIZES.md, borderWidth: 1, borderColor: COLORS.border, gap: SIZES.xs },
+  formCard: { padding: SIZES.md, borderWidth: 1, borderColor: COLORS.border, backgroundColor: COLORS.surface, gap: SIZES.xs },
   fieldLbl: { fontSize: 13, fontWeight: '700', color: COLORS.text, marginBottom: 6 },
   input: {
     backgroundColor: COLORS.background, borderWidth: 1, borderColor: COLORS.border,

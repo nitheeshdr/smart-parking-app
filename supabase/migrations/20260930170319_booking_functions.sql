@@ -30,7 +30,7 @@ BEGIN
           (start_time < p_end_time AND end_time >= p_end_time) OR
           (start_time >= p_start_time AND end_time <= p_end_time)
       )
-      AND booking_status IN ('pending', 'confirmed', 'active')
+      AND booking_status IN ('pending', 'confirmed', 'active', 'completed')
     LIMIT 1;
 
     IF v_conflicting_booking IS NOT NULL THEN
@@ -38,7 +38,7 @@ BEGIN
     END IF;
 
     -- 2. Check if the slot actually exists and is not disabled/maintenance
-    IF NOT EXISTS (SELECT 1 FROM parking_slots WHERE id = p_parking_slot_id AND status IN ('available', 'reserved')) THEN
+    IF NOT EXISTS (SELECT 1 FROM parking_slots WHERE id = p_parking_slot_id AND status IN ('available', 'reserved', 'occupied')) THEN
          RETURN jsonb_build_object('status', 'error', 'message', 'SLOT_UNAVAILABLE');
     END IF;
 

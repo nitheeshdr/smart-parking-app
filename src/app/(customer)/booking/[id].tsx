@@ -104,7 +104,7 @@ export default function BookingTicketScreen() {
           <View style={styles.qrWrap}>
             <View style={styles.qrIcon}>
               <QRCode
-                value={booking.qr_token || booking.id}
+                value={booking.qr_token || (id as string)}
                 size={100}
                 color={COLORS.text}
                 backgroundColor="transparent"

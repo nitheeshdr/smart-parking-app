@@ -108,7 +108,7 @@ export default function AdminLotsScreen() {
 
                 <View style={styles.actions}>
                   <Button
-                    variant="flat"
+                    variant="secondary"
                     onPress={() => updateStatusMutation.mutate({ id: item.id, status: isActive ? 'inactive' : 'active' })}
                     style={styles.actionBtn}
                   >

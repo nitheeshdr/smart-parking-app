@@ -131,7 +131,7 @@ export default function ManagerScanScreen() {
             </Button>
             
             <Button
-              variant="flat"
+              variant="secondary"
               isDisabled={loading}
               onPress={async () => {
                 if (!permission?.granted) {
@@ -231,7 +231,7 @@ export default function ManagerScanScreen() {
           )}
 
           <Button
-            variant="flat"
+            variant="secondary"
             isDisabled={loading}
             onPress={handleReset}
             style={styles.secondaryBtn}
@@ -242,7 +242,6 @@ export default function ManagerScanScreen() {
             </View>
           </Button>
         </View>
-      )}
       )}
 
       {/* QR Scanner Modal */}
@@ -336,7 +335,7 @@ const styles = StyleSheet.create({
   modalTitle: { fontSize: 20, fontWeight: '800', color: COLORS.text },
   closeBtn: { padding: 4 },
   cameraWrap: { flex: 1, position: 'relative' },
-  scannerOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' },
+  scannerOverlay: { ...StyleSheet.absoluteFill, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' },
   scannerTarget: { width: 250, height: 250, borderWidth: 2, borderColor: COLORS.primary, backgroundColor: 'transparent', borderRadius: SIZES.radiusMd },
   modalFooter: { padding: SIZES.lg, backgroundColor: COLORS.surface, alignItems: 'center' },
   modalFooterTxt: { fontSize: 14, color: COLORS.textMuted },

@@ -117,10 +117,10 @@ export const createAndPayForBooking = async (input: CreateBookingInput) => {
 
   const qrToken = `BKG-${bookingIntent.booking_id.split('-')[0].toUpperCase()}-OK`;
 
-  // Bypass edge function for demo: update booking directly
+  // Update booking status to active and payment status to paid
   const { error: updateError } = await supabase
     .from('bookings')
-    .update({ booking_status: 'completed', payment_status: 'paid', qr_token: qrToken })
+    .update({ booking_status: 'active', payment_status: 'paid', qr_token: qrToken })
     .eq('id', bookingIntent.booking_id);
 
   if (updateError) throw updateError;

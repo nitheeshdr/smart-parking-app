@@ -141,7 +141,7 @@ export default function ManagerLotsScreen() {
                 {/* Actions */}
                 <View style={styles.actions}>
                   <Button
-                    variant="flat"
+                    variant="secondary"
                     size="sm"
                     onPress={() => router.push(`/(manager)/lot/edit/${item.id}`)}
                     style={styles.actionBtn}
@@ -152,7 +152,7 @@ export default function ManagerLotsScreen() {
                     </View>
                   </Button>
                   <Button
-                    variant="flat"
+                    variant="secondary"
                     size="sm"
                     onPress={() => router.push(`/(manager)/lot/${item.id}/slots`)}
                     style={styles.actionBtn}

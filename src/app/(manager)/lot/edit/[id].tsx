@@ -105,7 +105,7 @@ export default function EditLotScreen() {
   return (
     <View style={styles.container}>
       <View style={styles.header}>
-        <Button variant="flat" size="sm" onPress={() => router.back()} style={styles.backBtn}>
+        <Button variant="secondary" size="sm" onPress={() => router.back()} style={styles.backBtn}>
           <AppIcon name="chevron-back" size={20} color={COLORS.text} />
         </Button>
         <Text style={styles.title}>Edit Lot</Text>
@@ -162,10 +162,11 @@ export default function EditLotScreen() {
             <View style={styles.mapWrap}>
               <MapplsGL.MapView 
                 style={styles.map}
-                onPress={(e) => {
-                  if (e.geometry && e.geometry.coordinates) {
-                    const lng = e.geometry.coordinates[0];
-                    const lat = e.geometry.coordinates[1];
+                onPress={(e: any) => {
+                  const coords = e?.geometry?.coordinates;
+                  if (coords && Array.isArray(coords)) {
+                    const lng = coords[0];
+                    const lat = coords[1];
                     setFormData(prev => ({
                       ...prev,
                       latitude: lat.toFixed(6),

@@ -18,22 +18,38 @@ export default function RootLayout() {
 
   useEffect(() => {
     // Initial session fetch
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
       setSession(session);
       setUser(session?.user || null);
-      if (session?.user?.user_metadata?.role) {
-        setRole(session.user.user_metadata.role);
+      if (session?.user) {
+        let role = session.user.user_metadata?.role;
+        if (!role) {
+          try {
+            const { data } = await supabase.from('profiles').select('role').eq('id', session.user.id).single();
+            if (data?.role) role = data.role;
+          } catch (e) {}
+        }
+        setRole(role || 'customer');
+      } else {
+        setRole(null);
       }
       setInitialized(true);
     });
 
     // Listen for auth state changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
       setSession(session);
       setUser(session?.user || null);
-      if (session?.user?.user_metadata?.role) {
-        setRole(session.user.user_metadata.role);
-      } else if (!session) {
+      if (session?.user) {
+        let role = session.user.user_metadata?.role;
+        if (!role) {
+          try {
+            const { data } = await supabase.from('profiles').select('role').eq('id', session.user.id).single();
+            if (data?.role) role = data.role;
+          } catch (e) {}
+        }
+        setRole(role || 'customer');
+      } else {
         setRole(null);
       }
     });
@@ -46,17 +62,19 @@ export default function RootLayout() {
   useEffect(() => {
     if (!isInitialized) return;
 
-    const inAuthGroup = segments[0] === '(auth)';
-    const role = useAuthStore.getState().role;
+    const rootSegment = segments[0];
+    const inAuthGroup = rootSegment === '(auth)';
+    const isAtRoot = !rootSegment || (rootSegment as string) === 'index';
+    const role = useAuthStore.getState().role || 'customer';
 
     if (!session) {
       if (!inAuthGroup) {
         // Redirect to the login page
         router.replace('/(auth)/login');
       }
-    } else if (session && role) {
-      // Redirect logged-in users away from the auth screens
-      if (inAuthGroup) {
+    } else if (session) {
+      // Redirect logged-in users away from auth screens or root index screen
+      if (inAuthGroup || isAtRoot) {
         if (role === 'customer') {
           router.replace('/(customer)/(tabs)/explore');
         } else if (role === 'parking_manager') {
@@ -64,17 +82,15 @@ export default function RootLayout() {
         } else if (role === 'admin') {
           router.replace('/(admin)/dashboard');
         } else {
-           // fallback
-           router.replace('/(customer)/(tabs)/explore');
+          router.replace('/(customer)/(tabs)/explore');
         }
       } else {
         // Route protection logic
-        const currentGroup = segments[0];
-        if (currentGroup === '(customer)' && role !== 'customer') {
+        if (rootSegment === '(customer)' && role !== 'customer') {
           router.replace(role === 'parking_manager' ? '/(manager)/(tabs)/dashboard' : '/(admin)/dashboard');
-        } else if (currentGroup === '(manager)' && role !== 'parking_manager') {
+        } else if (rootSegment === '(manager)' && role !== 'parking_manager') {
           router.replace(role === 'customer' ? '/(customer)/(tabs)/explore' : '/(admin)/dashboard');
-        } else if (currentGroup === '(admin)' && role !== 'admin') {
+        } else if (rootSegment === '(admin)' && role !== 'admin') {
           router.replace(role === 'customer' ? '/(customer)/(tabs)/explore' : '/(manager)/(tabs)/dashboard');
         }
       }
@@ -88,7 +104,7 @@ export default function RootLayout() {
   return (
     <QueryClientProvider client={queryClient}>
       <GestureHandlerRootView style={{ flex: 1 }}>
-        <HeroUINativeProvider theme="light">
+        <HeroUINativeProvider>
           <Stack screenOptions={{ headerShown: false }}>
             <Stack.Screen name="index" options={{ headerShown: false }} />
             <Stack.Screen name="(auth)" options={{ headerShown: false }} />

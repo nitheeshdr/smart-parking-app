@@ -7,18 +7,37 @@ import {
   RefreshControl,
   Pressable,
 } from 'react-native';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'expo-router';
 import { Card, Separator, Spinner, Button } from 'heroui-native';
 import { fetchManagerDashboardStats, fetchManagerRecentBookings } from '../../../features/parking/api/managerApi';
 import { useAuthStore } from '../../../stores/authStore';
+import { supabase } from '../../../lib/supabase';
 import { AppIcon } from '../../../components/app-icon';
 import { COLORS, SIZES } from '../../../constants/theme';
 
 export default function ManagerDashboardScreen() {
   const { user, signOut } = useAuthStore();
   const router = useRouter();
+  const queryClient = useQueryClient();
   const managerId = user?.id ?? '';
+
+  React.useEffect(() => {
+    const channel = supabase
+      .channel('manager_dashboard_realtime')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'bookings' }, () => {
+        queryClient.invalidateQueries({ queryKey: ['manager_stats'] });
+        queryClient.invalidateQueries({ queryKey: ['manager_recent_bookings'] });
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'parking_slots' }, () => {
+        queryClient.invalidateQueries({ queryKey: ['manager_stats'] });
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [queryClient]);
 
   const { data: stats, isLoading, refetch } = useQuery({
     queryKey: ['manager_stats', managerId],
@@ -183,7 +202,7 @@ export default function ManagerDashboardScreen() {
                       <Text style={styles.activityLot}>{lot?.name ?? '—'}</Text>
                     </View>
                     <View style={[styles.activityBadge, {
-                      backgroundColor: isActive ? COLORS.successLight : COLORS.secondaryLight,
+                      backgroundColor: isActive ? COLORS.successLight : COLORS.surfaceHover,
                     }]}>
                       <Text style={[styles.activityBadgeTxt, {
                         color: isActive ? COLORS.success : COLORS.textMuted,

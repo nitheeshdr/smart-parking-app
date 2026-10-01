@@ -116,18 +116,18 @@ export default function CustomerMapScreen() {
             </View>
             <View style={styles.statBox}>
               <Text style={styles.statLabel}>Price</Text>
-              <Text style={[styles.statValue, { color: COLORS.primary }]}>₹{selected.hourly_price}/hr</Text>
+              <Text style={[styles.statValue, { color: COLORS.primary }]}>₹{(selected as any).hourly_price || 50}/hr</Text>
             </View>
           </View>
 
           <Button 
-            className="w-full mt-4" 
-            color="primary"
+            variant="primary"
             onPress={() => {
+              const lotId = selected.id;
               setSelected(null);
-              router.push(`/lot/${selected.id}/book`);
+              router.push(`/(customer)/book/${lotId}`);
             }}
-            disabled={selected.available_capacity === 0}
+            isDisabled={selected.available_capacity === 0}
           >
             {selected.available_capacity === 0 ? 'Lot Full' : 'Book Slot'}
           </Button>

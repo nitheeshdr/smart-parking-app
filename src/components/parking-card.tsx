@@ -72,6 +72,7 @@ export function ParkingCard({ lot, onPress }: ParkingCardProps) {
 const styles = StyleSheet.create({
   card: {
     marginBottom: SIZES.md, overflow: 'hidden',
+    backgroundColor: COLORS.surface,
     borderWidth: 1, borderColor: COLORS.border, borderRadius: SIZES.radiusMd,
     shadowColor: '#000', shadowOpacity: 0.04, shadowRadius: 8, shadowOffset: { width: 0, height: 2 }, elevation: 2,
     padding: 0,

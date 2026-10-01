@@ -7,7 +7,7 @@ import {
   Pressable,
   RefreshControl,
 } from 'react-native';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'expo-router';
 import { Card, Spinner, Chip, Separator } from 'heroui-native';
 import { useAuthStore } from '../../../stores/authStore';
@@ -21,7 +21,7 @@ const STATUS_STYLE: Record<BookingStatus, { bg: string; text: string; icon: stri
   pending:   { bg: COLORS.warningLight,  text: COLORS.warning,  icon: 'time-outline' },
   confirmed: { bg: COLORS.primaryLight,  text: COLORS.primary,  icon: 'checkmark-circle-outline' },
   active:    { bg: COLORS.successLight,  text: COLORS.success,  icon: 'car-outline' },
-  completed: { bg: COLORS.secondaryLight,text: COLORS.textMuted, icon: 'checkmark-done-outline' },
+  completed: { bg: COLORS.surfaceHover,text: COLORS.textMuted, icon: 'checkmark-done-outline' },
   cancelled: { bg: COLORS.errorLight,    text: COLORS.error,    icon: 'close-circle-outline' },
   expired:   { bg: COLORS.borderStrong,  text: COLORS.textMuted, icon: 'alert-circle-outline' },
   no_show:   { bg: COLORS.errorLight,    text: COLORS.error,    icon: 'ban-outline' },
@@ -30,6 +30,25 @@ const STATUS_STYLE: Record<BookingStatus, { bg: string; text: string; icon: stri
 export default function CustomerBookingsScreen() {
   const { user } = useAuthStore();
   const router = useRouter();
+  const queryClient = useQueryClient();
+
+  React.useEffect(() => {
+    if (!user?.id) return;
+    const channel = supabase
+      .channel(`user_bookings_${user.id}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'bookings', filter: `customer_id=eq.${user.id}` },
+        () => {
+          queryClient.invalidateQueries({ queryKey: ['my_bookings', user.id] });
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [user?.id, queryClient]);
 
   const { data: bookings, isLoading, refetch } = useQuery({
     queryKey: ['my_bookings', user?.id],

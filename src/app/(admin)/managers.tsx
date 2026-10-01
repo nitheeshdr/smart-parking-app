@@ -97,7 +97,7 @@ export default function AdminManagersScreen() {
                     <Separator style={styles.sep} />
                     <View style={styles.actions}>
                       <Button
-                        variant="flat"
+                        variant="secondary"
                         onPress={() => updateStatusMutation.mutate({ id: item.id, status: 'rejected' })}
                         style={[styles.actionBtn, { borderColor: COLORS.error }]}
                       >

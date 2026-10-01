@@ -135,11 +135,9 @@ export default function CustomerProfileScreen() {
 
         {/* ── Hero ── */}
         <View style={styles.hero}>
-          <Avatar
-            size="xl"
-            fallback={meta.full_name?.charAt(0)?.toUpperCase() || 'D'}
-            style={styles.avatar}
-          />
+          <View style={styles.avatar}>
+            <Text style={styles.avatarTxt}>{meta.full_name?.charAt(0)?.toUpperCase() || 'D'}</Text>
+          </View>
           <Text style={styles.heroName}>{meta.full_name || 'Driver'}</Text>
           <Text style={styles.heroEmail}>{user?.email}</Text>
           <View style={styles.verifiedRow}>
@@ -195,7 +193,7 @@ export default function CustomerProfileScreen() {
             <View style={styles.emptyState}>
               <AppIcon name="car-outline" size={36} color={COLORS.textMuted} />
               <Text style={styles.emptyTxt}>No vehicles added yet</Text>
-              <Button size="sm" variant="flat" onPress={() => setShowAddVehicle(true)} style={styles.emptyBtn}>
+              <Button size="sm" variant="secondary" onPress={() => setShowAddVehicle(true)} style={styles.emptyBtn}>
                 <Text style={styles.emptyBtnTxt}>Add your first vehicle</Text>
               </Button>
             </View>
@@ -260,7 +258,7 @@ export default function CustomerProfileScreen() {
 
         {/* ── Sign Out ── */}
         <Button
-          variant="flat"
+          variant="secondary"
           onPress={handleSignOut}
           style={styles.signOutBtn}
         >
@@ -360,7 +358,12 @@ const styles = StyleSheet.create({
     alignItems: 'center', paddingTop: 56, paddingBottom: SIZES.xl,
     backgroundColor: COLORS.surface, borderBottomWidth: 1, borderBottomColor: COLORS.border,
   },
-  avatar: { marginBottom: SIZES.md },
+  avatar: {
+    width: 64, height: 64, borderRadius: 32,
+    backgroundColor: COLORS.primary, justifyContent: 'center', alignItems: 'center',
+    marginBottom: SIZES.md,
+  },
+  avatarTxt: { color: '#fff', fontSize: 26, fontWeight: '900' },
   heroName: { fontSize: 22, fontWeight: '900', color: COLORS.text, marginBottom: 4 },
   heroEmail: { fontSize: 14, color: COLORS.textMuted, marginBottom: SIZES.sm },
   verifiedRow: { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: COLORS.primaryLight, paddingHorizontal: 12, paddingVertical: 5, borderRadius: 20 },

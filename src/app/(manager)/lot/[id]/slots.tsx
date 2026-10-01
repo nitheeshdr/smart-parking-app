@@ -105,8 +105,8 @@ export default function ManageSlotsScreen() {
             <Card style={styles.slotCard}>
               <View style={styles.slotHeader}>
                 <Text style={styles.slotNumber}>{item.slot_number}</Text>
-                <View style={[styles.badge, { backgroundColor: item.status === 'available' ? COLORS.secondaryLight : COLORS.border }]}>
-                  <Text style={[styles.badgeText, { color: item.status === 'available' ? COLORS.secondary : COLORS.textMuted }]}>{item.status}</Text>
+                <View style={[styles.badge, { backgroundColor: item.status === 'available' ? COLORS.primaryLight : COLORS.border }]}>
+                  <Text style={[styles.badgeText, { color: item.status === 'available' ? COLORS.primary : COLORS.textMuted }]}>{item.status}</Text>
                 </View>
               </View>
               <Text style={styles.price}>₹{item.hourly_price}/hr</Text>

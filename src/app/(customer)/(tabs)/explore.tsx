@@ -9,10 +9,11 @@ import {
   ScrollView,
   RefreshControl,
 } from 'react-native';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'expo-router';
 import { Spinner, Chip, Card, Separator } from 'heroui-native';
 import { fetchParkingLots } from '../../../features/parking/api/parkingApi';
+import { supabase } from '../../../lib/supabase';
 import { useAuthStore } from '../../../stores/authStore';
 import { AppIcon } from '../../../components/app-icon';
 import { COLORS, SIZES } from '../../../constants/theme';
@@ -48,6 +49,24 @@ export default function CustomerExploreScreen() {
       }
     })();
   }, []);
+
+  const queryClient = useQueryClient();
+
+  useEffect(() => {
+    const channel = supabase
+      .channel('explore_realtime')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'parking_lots' }, () => {
+        queryClient.invalidateQueries({ queryKey: ['parking_lots'] });
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'parking_slots' }, () => {
+        queryClient.invalidateQueries({ queryKey: ['parking_lots'] });
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [queryClient]);
 
   const { data: lots, isLoading, refetch } = useQuery({
     queryKey: ['parking_lots'],

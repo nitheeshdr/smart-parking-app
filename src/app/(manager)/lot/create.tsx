@@ -79,6 +79,18 @@ export default function CreateLotScreen() {
         throw new Error('Capacity must be a whole number between 1 and 500.');
       }
 
+      // Prevent duplicate lot creation with same name
+      const { data: existingLot } = await supabase
+        .from('parking_lots')
+        .select('id')
+        .eq('manager_id', manager.id)
+        .eq('name', formData.name.trim())
+        .maybeSingle();
+
+      if (existingLot) {
+        throw new Error('A parking lot with this name already exists in your account.');
+      }
+
       const { data: newLot, error } = await supabase
         .from('parking_lots')
         .insert({
@@ -130,7 +142,7 @@ export default function CreateLotScreen() {
   return (
     <View style={styles.container}>
       <View style={styles.header}>
-        <Button variant="flat" size="sm" onPress={() => router.back()} style={styles.backBtn}>
+        <Button variant="secondary" size="sm" onPress={() => router.back()} style={styles.backBtn}>
           <AppIcon name="chevron-back" size={20} color={COLORS.text} />
         </Button>
         <Text style={styles.title}>Add New Lot</Text>
@@ -195,10 +207,11 @@ export default function CreateLotScreen() {
             <View style={styles.mapWrap}>
               <MapplsGL.MapView 
                 style={styles.map}
-                onPress={(e) => {
-                  if (e.geometry && e.geometry.coordinates) {
-                    const lng = e.geometry.coordinates[0];
-                    const lat = e.geometry.coordinates[1];
+                onPress={(e: any) => {
+                  const coords = e?.geometry?.coordinates;
+                  if (coords && Array.isArray(coords)) {
+                    const lng = coords[0];
+                    const lat = coords[1];
                     setFormData(prev => ({
                       ...prev,
                       latitude: lat.toFixed(6),
