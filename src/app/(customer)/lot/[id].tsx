@@ -13,6 +13,7 @@ import { Card, Spinner, Separator, Button, Chip } from 'heroui-native';
 import { fetchParkingLotById, fetchParkingSlots } from '../../../features/parking/api/parkingApi';
 import { AppIcon } from '../../../components/app-icon';
 import { COLORS, SIZES } from '../../../constants/theme';
+import { useRealtimeSync } from '../../../hooks/useRealtimeSync';
 
 type SlotType = 'regular' | 'disabled' | 'ev' | 'premium' | 'reserved';
 const SLOT_ICON: Record<SlotType, string> = {
@@ -26,6 +27,8 @@ const SLOT_ICON: Record<SlotType, string> = {
 export default function ParkingLotDetailsScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
+
+  useRealtimeSync(`lot_detail_${id}`, ['parking_slots', 'parking_lots'], [['slots', id], ['lot', id]]);
 
   const { data: lot, isLoading } = useQuery({
     queryKey: ['lot', id],

@@ -5,10 +5,13 @@ import { Card, Separator, Spinner, Button } from 'heroui-native';
 import { supabase } from '../../lib/supabase';
 import { AppIcon } from '../../components/app-icon';
 import { COLORS, SIZES } from '../../constants/theme';
+import { useRealtimeSync } from '../../hooks/useRealtimeSync';
 
 export default function AdminLotsScreen() {
   const queryClient = useQueryClient();
   const [filter, setFilter] = useState<'all' | 'active' | 'inactive'>('all');
+
+  useRealtimeSync('admin_lots_realtime', ['parking_lots', 'parking_slots'], [['admin_lots']]);
 
   const { data: lots, isLoading, refetch } = useQuery({
     queryKey: ['admin_lots'],

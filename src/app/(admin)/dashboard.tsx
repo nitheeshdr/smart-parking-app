@@ -24,6 +24,14 @@ export default function AdminDashboard() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, () => {
         queryClient.invalidateQueries({ queryKey: ['admin_stats'] });
       })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'parking_slots' }, () => {
+        queryClient.invalidateQueries({ queryKey: ['admin_stats'] });
+        queryClient.invalidateQueries({ queryKey: ['admin_lots'] });
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'parking_lots' }, () => {
+        queryClient.invalidateQueries({ queryKey: ['admin_stats'] });
+        queryClient.invalidateQueries({ queryKey: ['admin_lots'] });
+      })
       .subscribe();
     return () => { supabase.removeChannel(channel); };
   }, [queryClient]);

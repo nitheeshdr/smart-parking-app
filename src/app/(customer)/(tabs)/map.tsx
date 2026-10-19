@@ -7,6 +7,7 @@ import * as Location from 'expo-location';
 import { fetchParkingLots, ParkingLot } from '../../../features/parking/api/parkingApi';
 import { AppIcon } from '../../../components/app-icon';
 import { COLORS, SIZES } from '../../../constants/theme';
+import { useRealtimeSync } from '../../../hooks/useRealtimeSync';
 import MapplsGL from 'mappls-map-react-native';
 
 export default function CustomerMapScreen() {
@@ -27,6 +28,8 @@ export default function CustomerMapScreen() {
       }
     })();
   }, []);
+
+  useRealtimeSync('map_realtime', ['parking_slots', 'parking_lots'], [['parking_lots']]);
 
   const { data: lots, isLoading: loadingLots } = useQuery({
     queryKey: ['parking_lots'],

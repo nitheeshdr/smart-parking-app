@@ -7,10 +7,13 @@ import { supabase } from '../../../lib/supabase';
 import { Card, Separator, Spinner, Button } from 'heroui-native';
 import { AppIcon } from '../../../components/app-icon';
 import { COLORS, SIZES } from '../../../constants/theme';
+import { useRealtimeSync } from '../../../hooks/useRealtimeSync';
 
 export default function ManagerLotsScreen() {
   const { user } = useAuthStore();
   const router = useRouter();
+
+  useRealtimeSync('manager_lots_realtime', ['parking_lots', 'parking_slots'], [['manager_lots']]);
 
   const { data: lots, isLoading, refetch } = useQuery({
     queryKey: ['manager_lots', user?.id],

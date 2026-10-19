@@ -5,12 +5,15 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Button, Card } from 'heroui-native';
 import { supabase } from '../../../../lib/supabase';
 import { COLORS, SIZES } from '../../../../constants/theme';
+import { useRealtimeSync } from '../../../../hooks/useRealtimeSync';
 
 export default function ManageSlotsScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams();
   const queryClient = useQueryClient();
   const [adding, setAdding] = useState(false);
+
+  useRealtimeSync(`manager_slots_${id}`, ['parking_slots'], [['lot_slots', id]]);
 
   const { data: slots, isLoading } = useQuery({
     queryKey: ['lot_slots', id],
