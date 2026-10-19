@@ -2,7 +2,7 @@ import { useEffect } from 'react';
 import { useQueryClient, QueryKey } from '@tanstack/react-query';
 import { supabase } from '../lib/supabase';
 
-type Table = 'parking_lots' | 'parking_slots' | 'bookings' | 'profiles';
+type Table = 'parking_lots' | 'parking_slots' | 'bookings' | 'profiles' | 'parking_managers' | 'parking_system';
 
 /**
  * Subscribes to Postgres changes on the given tables and invalidates the

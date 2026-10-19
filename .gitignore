@@ -43,3 +43,6 @@ yarn-error.*
 # /ios
 # /android
 .gstack/
+
+# Board secrets (copy hardware/smart_parking/secrets.example.h)
+hardware/smart_parking/secrets.h

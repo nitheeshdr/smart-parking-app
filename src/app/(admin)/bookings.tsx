@@ -1,140 +1,66 @@
-import React, { useState } from 'react';
-import { View, Text, StyleSheet, FlatList, RefreshControl } from 'react-native';
-import { useQuery } from '@tanstack/react-query';
-import { Card, Separator, Spinner } from 'heroui-native';
-import { supabase } from '../../lib/supabase';
-import { AppIcon } from '../../components/app-icon';
-import { COLORS, SIZES } from '../../constants/theme';
+import React, { useMemo, useState } from 'react';
+import { Alert, View } from 'react-native';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { cancelBooking, checkInBooking, checkOutBooking, fetchStaffBookings } from '../../api/bookings';
+import { useRealtimeSync } from '../../hooks/useRealtimeSync';
+import { Button, EmptyState, ErrorState, Loading, Screen, Segmented } from '../../components/ui';
+import { BookingCard } from '../../components/booking-card';
+import { errorMessage } from '../../lib/format';
+import type { Booking } from '../../types/db';
 
-export default function AdminBookingsScreen() {
-  const { data: bookings, isLoading, refetch } = useQuery({
-    queryKey: ['admin_all_bookings'],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('bookings')
-        .select('*, profiles(full_name), parking_lots(name), vehicles(vehicle_number)')
-        .order('created_at', { ascending: false });
-      if (error) throw error;
-      return data;
+type Tab = 'now' | 'upcoming' | 'past';
+
+export default function AdminBookings() {
+  const queryClient = useQueryClient();
+  const [tab, setTab] = useState<Tab>('now');
+
+  useRealtimeSync('admin_bookings', ['bookings'], [['all_bookings'], ['staff_bookings']]);
+  const { data, isLoading, error, refetch, isRefetching } = useQuery({ queryKey: ['all_bookings'], queryFn: () => fetchStaffBookings({ limit: 200 }) });
+
+  const run = useMutation({
+    mutationFn: (v: { kind: 'in' | 'out' | 'cancel'; id: string }) => (v.kind === 'in' ? checkInBooking(v.id) : v.kind === 'out' ? checkOutBooking(v.id) : cancelBooking(v.id)),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['all_bookings'] });
+      queryClient.invalidateQueries({ queryKey: ['staff_bookings'] });
     },
+    onError: (e) => Alert.alert('Action failed', errorMessage(e)),
   });
 
-  const STATUS_COLOR: Record<string, { bg: string, text: string }> = {
-    confirmed: { bg: COLORS.successLight, text: COLORS.success },
-    active: { bg: COLORS.primaryLight, text: COLORS.primary },
-    completed: { bg: COLORS.surfaceHover, text: COLORS.textMuted },
-    pending: { bg: COLORS.warningLight, text: COLORS.warning },
-    cancelled: { bg: COLORS.errorLight, text: COLORS.error },
-  };
+  const list = useMemo(() => {
+    const all = data ?? [];
+    if (tab === 'now') return all.filter((b) => b.booking_status === 'active');
+    if (tab === 'upcoming') return all.filter((b) => b.booking_status === 'confirmed' || b.booking_status === 'pending');
+    return all.filter((b) => ['completed', 'cancelled', 'expired', 'no_show'].includes(b.booking_status));
+  }, [data, tab]);
 
-  return (
-    <View style={styles.container}>
-      <View style={styles.header}>
-        <Text style={styles.title}>All Bookings</Text>
-        <Text style={styles.subtitle}>System-wide reservation history</Text>
-      </View>
-
-      {isLoading ? (
-        <View style={styles.center}><Spinner size="lg" /></View>
-      ) : (
-        <FlatList
-          data={bookings}
-          keyExtractor={(item) => item.id}
-          contentContainerStyle={styles.list}
-          refreshControl={<RefreshControl refreshing={isLoading} onRefresh={refetch} />}
-          ListEmptyComponent={
-            <View style={styles.empty}>
-              <AppIcon name="receipt-outline" size={40} color={COLORS.textMuted} />
-              <Text style={styles.emptyTxt}>No bookings found</Text>
-            </View>
-          }
-          renderItem={({ item }) => {
-            const profile = item.profiles as any;
-            const lot = item.parking_lots as any;
-            const vehicle = item.vehicles as any;
-            const sColor = STATUS_COLOR[item.booking_status] || STATUS_COLOR.completed;
-
-            return (
-              <Card style={styles.card}>
-                <View style={styles.row}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.ref}>{item.booking_reference}</Text>
-                    <Text style={styles.user}>{profile?.full_name || 'Unknown User'}</Text>
-                  </View>
-                  <View style={[styles.statusBadge, { backgroundColor: sColor.bg }]}>
-                    <Text style={[styles.statusTxt, { color: sColor.text }]}>
-                      {item.booking_status}
-                    </Text>
-                  </View>
-                </View>
-
-                <Separator style={styles.sep} />
-
-                <View style={styles.detailsGrid}>
-                  <View style={styles.detail}>
-                    <AppIcon name="business-outline" size={14} color={COLORS.textMuted} />
-                    <Text style={styles.detailTxt}>{lot?.name}</Text>
-                  </View>
-                  <View style={styles.detail}>
-                    <AppIcon name="car-outline" size={14} color={COLORS.textMuted} />
-                    <Text style={styles.detailTxt}>{vehicle?.vehicle_number}</Text>
-                  </View>
-                  <View style={styles.detail}>
-                    <AppIcon name="calendar-outline" size={14} color={COLORS.textMuted} />
-                    <Text style={styles.detailTxt}>{item.date}</Text>
-                  </View>
-                  <View style={styles.detail}>
-                    <AppIcon name="time-outline" size={14} color={COLORS.textMuted} />
-                    <Text style={styles.detailTxt}>{item.start_time?.slice(0, 5)} - {item.end_time?.slice(0, 5)}</Text>
-                  </View>
-                </View>
-
-                <Separator style={styles.sep} />
-
-                <View style={styles.footerRow}>
-                  <Text style={styles.paymentTxt}>
-                    Payment: <Text style={{ color: item.payment_status === 'paid' ? COLORS.success : COLORS.warning }}>{item.payment_status}</Text>
-                  </Text>
-                  <Text style={styles.amount}>₹{item.total_amount}</Text>
-                </View>
-              </Card>
-            );
-          }}
+  const actions = (b: Booking) => (
+    <View style={{ flexDirection: 'row', gap: 8, marginTop: 12 }}>
+      {b.booking_status === 'confirmed' ? <Button label="Check in" small icon="log-in-outline" style={{ flex: 1 }} onPress={() => run.mutate({ kind: 'in', id: b.id })} /> : null}
+      {b.booking_status === 'active' ? <Button label="Check out" small icon="log-out-outline" style={{ flex: 1 }} onPress={() => run.mutate({ kind: 'out', id: b.id })} /> : null}
+      {b.booking_status === 'confirmed' || b.booking_status === 'pending' ? (
+        <Button
+          label="Cancel"
+          small
+          variant="danger"
+          style={{ flex: 1 }}
+          onPress={() => Alert.alert('Cancel this booking?', 'The customer is refunded.', [{ text: 'Keep', style: 'cancel' }, { text: 'Cancel booking', style: 'destructive', onPress: () => run.mutate({ kind: 'cancel', id: b.id }) }])}
         />
-      )}
+      ) : null}
     </View>
   );
+
+  return (
+    <Screen title="Bookings" subtitle="All customer bookings, live" refreshing={isRefetching} onRefresh={refetch}>
+      <Segmented value={tab} onChange={setTab} options={[{ value: 'now', label: 'Parked now' }, { value: 'upcoming', label: 'Upcoming' }, { value: 'past', label: 'Past' }]} />
+      {isLoading ? (
+        <Loading />
+      ) : error ? (
+        <ErrorState error={error} onRetry={refetch} />
+      ) : list.length === 0 ? (
+        <EmptyState icon="receipt-outline" title="Nothing here" hint={tab === 'now' ? 'No vehicles are checked in.' : undefined} />
+      ) : (
+        list.map((b) => <BookingCard key={b.id} booking={b} showCustomer footer={actions(b)} />)
+      )}
+    </Screen>
+  );
 }
-
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: COLORS.background },
-  header: {
-    paddingHorizontal: SIZES.lg, paddingTop: 56, paddingBottom: SIZES.md,
-    backgroundColor: COLORS.surface, borderBottomWidth: 1, borderBottomColor: COLORS.border,
-  },
-  title: { fontSize: 24, fontWeight: '900', color: COLORS.text },
-  subtitle: { fontSize: 13, color: COLORS.textMuted, marginTop: 2 },
-  
-  list: { padding: SIZES.lg, gap: SIZES.md },
-  center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  empty: { padding: SIZES.xl, alignItems: 'center', gap: SIZES.sm },
-  emptyTxt: { color: COLORS.textMuted, fontSize: 14 },
-
-  card: { padding: SIZES.md, borderWidth: 1, borderColor: COLORS.border },
-  row: { flexDirection: 'row', alignItems: 'flex-start', gap: SIZES.md },
-  ref: { fontSize: 14, fontWeight: '800', color: COLORS.text },
-  user: { fontSize: 13, color: COLORS.textMuted, marginTop: 2 },
-  
-  statusBadge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12 },
-  statusTxt: { fontSize: 10, fontWeight: '800', textTransform: 'capitalize' },
-
-  sep: { marginVertical: SIZES.sm },
-  
-  detailsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: SIZES.sm },
-  detail: { width: '47%', flexDirection: 'row', alignItems: 'center', gap: 6 },
-  detailTxt: { fontSize: 13, color: COLORS.textSecondary },
-
-  footerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  paymentTxt: { fontSize: 12, fontWeight: '600', color: COLORS.textMuted, textTransform: 'capitalize' },
-  amount: { fontSize: 16, fontWeight: '900', color: COLORS.primary },
-});

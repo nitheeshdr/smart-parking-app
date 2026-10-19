@@ -1,173 +1,101 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, Pressable, ActivityIndicator, Alert, Platform } from 'react-native';
-import { useQuery } from '@tanstack/react-query';
+import React, { useEffect, useState } from 'react';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
-import { Spinner, Button, Separator } from 'heroui-native';
+import { useQuery } from '@tanstack/react-query';
 import * as Location from 'expo-location';
-import { fetchParkingLots, ParkingLot } from '../../../features/parking/api/parkingApi';
-import { AppIcon } from '../../../components/app-icon';
-import { COLORS, SIZES } from '../../../constants/theme';
-import { useRealtimeSync } from '../../../hooks/useRealtimeSync';
 import MapplsGL from 'mappls-map-react-native';
+import { fetchActiveLots } from '../../../api/lots';
+import { useRealtimeSync } from '../../../hooks/useRealtimeSync';
+import { AppIcon } from '../../../components/app-icon';
+import { Button, Loading, Screen } from '../../../components/ui';
+import { lotTone } from '../../../components/lot-card';
+import { COLORS, SIZES } from '../../../constants/theme';
+import type { ParkingLot } from '../../../types/db';
 
-export default function CustomerMapScreen() {
+export default function MapScreen() {
   const router = useRouter();
-  const [selected, setSelected] = useState<ParkingLot | null>(null);
-  const [location, setLocation] = useState<{lat: number, lng: number} | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [me, setMe] = useState<{ lat: number; lng: number } | null>(null);
 
   useEffect(() => {
     (async () => {
-      const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status === 'granted') {
-        try {
-          const loc = await Location.getCurrentPositionAsync({});
-          setLocation({ lat: loc.coords.latitude, lng: loc.coords.longitude });
-        } catch (e) {
-          console.warn(e);
-        }
+      try {
+        const { status } = await Location.requestForegroundPermissionsAsync();
+        if (status !== 'granted') return;
+        const pos = await Location.getCurrentPositionAsync({});
+        setMe({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+      } catch {
+        // location is optional
       }
     })();
   }, []);
 
-  useRealtimeSync('map_realtime', ['parking_slots', 'parking_lots'], [['parking_lots']]);
+  useRealtimeSync('customer_map', ['parking_lots', 'parking_slots'], [['lots']]);
+  const { data: lots, isLoading } = useQuery({ queryKey: ['lots'], queryFn: fetchActiveLots });
 
-  const { data: lots, isLoading: loadingLots } = useQuery({
-    queryKey: ['parking_lots'],
-    queryFn: fetchParkingLots,
-  });
-
-  const totalFree = lots?.reduce((s, l) => s + l.available_capacity, 0) ?? 0;
-  
-  const centerLat = location ? location.lat : (lots && lots.length > 0 ? lots[0].latitude : 12.9716);
-  const centerLng = location ? location.lng : (lots && lots.length > 0 ? lots[0].longitude : 77.5946);
+  // Always read the selected lot from live data so the sheet updates when a sensor changes.
+  const selected: ParkingLot | undefined = lots?.find((l) => l.id === selectedId);
+  const first = lots?.[0];
+  const center: [number, number] = me ? [me.lng, me.lat] : first ? [first.longitude, first.latitude] : [80.2707, 13.0827];
+  const totalFree = (lots ?? []).reduce((s, l) => s + l.available_capacity, 0);
 
   return (
-    <View style={styles.container}>
-      <View style={styles.header}>
-        <View>
-          <Text style={styles.title}>Map View</Text>
-          <Text style={styles.subtitle}>
-            {lots?.length ?? 0} lots{' '}
-            <Text style={{ color: COLORS.success, fontWeight: '700' }}>· {totalFree} free</Text>
-          </Text>
-        </View>
-        <View style={styles.legend}>
-          <View style={[styles.legendDot, { backgroundColor: COLORS.success }]} />
-          <Text style={styles.legendTxt}>Free</Text>
-          <View style={[styles.legendDot, { backgroundColor: COLORS.error }]} />
-          <Text style={styles.legendTxt}>Full</Text>
-        </View>
-      </View>
-
-      <View style={styles.mapWrap}>
-        {loadingLots ? (
-          <View style={styles.loadingBox}>
-            <Spinner color="primary" />
-            <Text style={{ marginTop: 10, color: COLORS.textMuted }}>Loading lots...</Text>
-          </View>
-        ) : (
-          <MapplsGL.MapView style={{flex: 1}}>
-            <MapplsGL.Camera
-              zoomLevel={13}
-              centerCoordinate={[centerLng, centerLat]}
-            />
-            {location && (
-               <MapplsGL.PointAnnotation id="user-loc" coordinate={[location.lng, location.lat]}>
-                 <View style={styles.userMarker} />
-               </MapplsGL.PointAnnotation>
-            )}
-            
-            {lots?.map((lot) => {
-              const isFull = lot.available_capacity === 0;
-              const color = isFull ? '#DC2626' : '#16A34A';
-              
-              return (
-                <MapplsGL.PointAnnotation 
-                  key={lot.id} 
-                  id={lot.id} 
-                  coordinate={[lot.longitude, lot.latitude]}
-                  onSelected={() => setSelected(lot)}
-                >
-                  <View style={[styles.lotMarker, { backgroundColor: color }]} />
-                </MapplsGL.PointAnnotation>
-              );
-            })}
+    <Screen title="Map" subtitle={`${lots?.length ?? 0} lots · ${totalFree} free`} scroll={false} padded={false}>
+      {isLoading ? (
+        <Loading label="Loading map…" />
+      ) : (
+        <View style={{ flex: 1 }}>
+          <MapplsGL.MapView style={{ flex: 1 }}>
+            <MapplsGL.Camera zoomLevel={14} centerCoordinate={center} />
+            {me ? (
+              <MapplsGL.PointAnnotation id="me" coordinate={[me.lng, me.lat]}>
+                <View style={styles.me} />
+              </MapplsGL.PointAnnotation>
+            ) : null}
+            {(lots ?? []).map((lot) => (
+              <MapplsGL.PointAnnotation key={`${lot.id}-${lot.available_capacity}`} id={lot.id} coordinate={[lot.longitude, lot.latitude]} onSelected={() => setSelectedId(lot.id)}>
+                <View style={[styles.pin, { backgroundColor: lotTone(lot).fg }]}>
+                  <Text style={styles.pinTxt}>{lot.available_capacity}</Text>
+                </View>
+              </MapplsGL.PointAnnotation>
+            ))}
           </MapplsGL.MapView>
-        )}
-      </View>
 
-      {selected && (
-        <View style={styles.bottomSheet}>
-          <View style={styles.sheetHeader}>
-            <View>
-              <Text style={styles.lotTitle}>{selected.name}</Text>
-              <Text style={styles.lotAddress} numberOfLines={1}>{selected.address}, {selected.city}</Text>
+          {selected ? (
+            <View style={styles.sheet}>
+              <View style={styles.sheetTop}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.name}>{selected.name}</Text>
+                  <Text style={styles.addr} numberOfLines={1}>{selected.address}, {selected.city}</Text>
+                </View>
+                <Pressable onPress={() => setSelectedId(null)} hitSlop={10} accessibilityLabel="Close" accessibilityRole="button">
+                  <AppIcon name="close" size={22} color={COLORS.text} />
+                </Pressable>
+              </View>
+              <Text style={[styles.free, { color: lotTone(selected).fg }]}>{selected.available_capacity} of {selected.total_capacity} slots free</Text>
+              <View style={{ flexDirection: 'row', gap: SIZES.sm }}>
+                <Button label="Details" variant="secondary" style={{ flex: 1 }} onPress={() => router.push(`/(customer)/lot/${selected.id}`)} />
+                <Button label="Book" style={{ flex: 1 }} disabled={selected.available_capacity === 0} onPress={() => router.push(`/(customer)/book/${selected.id}`)} />
+              </View>
             </View>
-            <Pressable onPress={() => setSelected(null)} style={styles.closeBtn}>
-              <AppIcon name="close" size={20} color={COLORS.text} />
-            </Pressable>
-          </View>
-
-          <Separator style={{ marginVertical: SIZES.md }} />
-
-          <View style={styles.statsRow}>
-            <View style={styles.statBox}>
-              <Text style={styles.statLabel}>Available</Text>
-              <Text style={[styles.statValue, { color: selected.available_capacity > 0 ? COLORS.success : COLORS.error }]}>
-                {selected.available_capacity} <Text style={{ fontSize: 12 }}>/ {selected.total_capacity}</Text>
-              </Text>
-            </View>
-            <View style={styles.statBox}>
-              <Text style={styles.statLabel}>Price</Text>
-              <Text style={[styles.statValue, { color: COLORS.primary }]}>₹{(selected as any).hourly_price || 50}/hr</Text>
-            </View>
-          </View>
-
-          <Button 
-            variant="primary"
-            onPress={() => {
-              const lotId = selected.id;
-              setSelected(null);
-              router.push(`/(customer)/book/${lotId}`);
-            }}
-            isDisabled={selected.available_capacity === 0}
-          >
-            {selected.available_capacity === 0 ? 'Lot Full' : 'Book Slot'}
-          </Button>
+          ) : null}
         </View>
       )}
-    </View>
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: COLORS.background },
-  header: { 
-    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
-    paddingHorizontal: SIZES.md, paddingTop: Platform.OS === 'ios' ? 60 : 40, paddingBottom: SIZES.sm,
-    backgroundColor: COLORS.surface, borderBottomWidth: 1, borderBottomColor: COLORS.border 
+  me: { width: 16, height: 16, borderRadius: 8, backgroundColor: COLORS.primary, borderWidth: 3, borderColor: '#fff' },
+  pin: { minWidth: 30, height: 30, borderRadius: 15, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: '#fff', paddingHorizontal: 6 },
+  pinTxt: { color: '#fff', fontWeight: '900', fontSize: 12 },
+  sheet: {
+    position: 'absolute', left: 0, right: 0, bottom: 0, backgroundColor: COLORS.surface, padding: SIZES.lg, gap: SIZES.sm,
+    borderTopLeftRadius: SIZES.radiusXl, borderTopRightRadius: SIZES.radiusXl, elevation: 10,
+    shadowColor: '#000', shadowOpacity: 0.12, shadowRadius: 12, shadowOffset: { width: 0, height: -4 },
   },
-  title: { fontSize: 22, fontWeight: '700', color: COLORS.text },
-  subtitle: { fontSize: 13, color: COLORS.textMuted, marginTop: 2 },
-  legend: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  legendDot: { width: 10, height: 10, borderRadius: 5 },
-  legendTxt: { fontSize: 12, color: COLORS.textMuted, fontWeight: '500', marginRight: 4 },
-  mapWrap: { flex: 1, backgroundColor: '#f0f0f0' },
-  loadingBox: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  userMarker: { width: 16, height: 16, borderRadius: 8, backgroundColor: '#2563EB', borderWidth: 2, borderColor: '#fff' },
-  lotMarker: { width: 14, height: 14, borderRadius: 7, borderWidth: 2, borderColor: '#fff' },
-  bottomSheet: {
-    position: 'absolute', bottom: 0, left: 0, right: 0,
-    backgroundColor: COLORS.surface, borderTopLeftRadius: 24, borderTopRightRadius: 24,
-    padding: SIZES.lg,
-    shadowColor: '#000', shadowOffset: { width: 0, height: -4 }, shadowOpacity: 0.1, shadowRadius: 12, elevation: 10,
-  },
-  sheetHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
-  lotTitle: { fontSize: 18, fontWeight: '700', color: COLORS.text },
-  lotAddress: { fontSize: 13, color: COLORS.textMuted, marginTop: 4, maxWidth: '90%' },
-  closeBtn: { padding: 4, backgroundColor: COLORS.background, borderRadius: 16 },
-  statsRow: { flexDirection: 'row', gap: SIZES.md },
-  statBox: { flex: 1, backgroundColor: COLORS.background, padding: SIZES.md, borderRadius: SIZES.sm },
-  statLabel: { fontSize: 12, color: COLORS.textMuted, fontWeight: '500', marginBottom: 4 },
-  statValue: { fontSize: 20, fontWeight: '700' }
+  sheetTop: { flexDirection: 'row', alignItems: 'flex-start', gap: SIZES.sm },
+  name: { fontSize: 18, fontWeight: '800', color: COLORS.text },
+  addr: { fontSize: 13, color: COLORS.textMuted, marginTop: 2 },
+  free: { fontSize: 15, fontWeight: '800', marginVertical: 4 },
 });

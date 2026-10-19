@@ -1,120 +1,45 @@
--- Seed Data for Smart Parking Platform
-
--- 1. Create a dummy password hash (e.g. 'password123')
--- For auth.users we must insert records.
+-- Seed: the admin (runs the lot), one customer, the lot, and the 2 hardware slots.
+-- Both accounts use the password "password123" - change it before going public.
 
 DO $$
 DECLARE
-    v_admin_id UUID := uuid_generate_v4();
-    v_manager_ids UUID[] := ARRAY[uuid_generate_v4(), uuid_generate_v4(), uuid_generate_v4(), uuid_generate_v4(), uuid_generate_v4()];
-    v_customer_ids UUID[];
-    v_lot_ids UUID[];
-    v_slot_ids UUID[];
-    v_vehicle_ids UUID[];
-    
-    i INT;
-    j INT;
-    k INT;
-    v_lot_id UUID;
-    v_slot_id UUID;
-    v_customer_id UUID;
-    v_vehicle_id UUID;
+  v_admin    UUID := gen_random_uuid();
+  v_customer UUID := gen_random_uuid();
+  v_lot      UUID := gen_random_uuid();
 BEGIN
-    -- We bypass auth.users for raw seed by inserting directly into profiles but we must satisfy FK to auth.users if RLS or triggers are active.
-    -- However, local supabase allows inserting into auth.users.
-    
-    -- Insert Admin
-    INSERT INTO auth.users (id, instance_id, email, encrypted_password, email_confirmed_at, raw_app_meta_data, raw_user_meta_data, created_at, updated_at, role)
-    VALUES (v_admin_id, '00000000-0000-0000-0000-000000000000', 'admin@smartparking.com', crypt('password123', gen_salt('bf')), NOW(), '{"provider":"email","providers":["email"]}'::jsonb, jsonb_build_object('full_name', 'System Admin', 'role', 'admin'), NOW(), NOW(), 'authenticated');
+  INSERT INTO auth.users (
+    instance_id, id, aud, role, email, encrypted_password, email_confirmed_at,
+    raw_app_meta_data, raw_user_meta_data, created_at, updated_at,
+    confirmation_token, recovery_token, email_change_token_new, email_change
+  ) VALUES
+    ('00000000-0000-0000-0000-000000000000', v_admin, 'authenticated', 'authenticated', 'admin@smartparking.com',
+     extensions.crypt('password123', extensions.gen_salt('bf')), now(),
+     '{"provider":"email","providers":["email"]}', '{"full_name":"Lot Admin"}', now(), now(), '', '', '', ''),
+    ('00000000-0000-0000-0000-000000000000', v_customer, 'authenticated', 'authenticated', 'customer@smartparking.com',
+     extensions.crypt('password123', extensions.gen_salt('bf')), now(),
+     '{"provider":"email","providers":["email"]}', '{"full_name":"Demo Customer"}', now(), now(), '', '', '', '');
 
-    -- Insert 5 Managers
-    FOR i IN 1..5 LOOP
-        INSERT INTO auth.users (id, instance_id, email, encrypted_password, email_confirmed_at, raw_app_meta_data, raw_user_meta_data, created_at, updated_at, role)
-        VALUES (v_manager_ids[i], '00000000-0000-0000-0000-000000000000', 'manager'||i||'@smartparking.com', crypt('password123', gen_salt('bf')), NOW(), '{"provider":"email","providers":["email"]}'::jsonb, jsonb_build_object('full_name', 'Manager '||i, 'role', 'parking_manager'), NOW(), NOW(), 'authenticated');
-    END LOOP;
+  INSERT INTO auth.identities (id, user_id, provider_id, identity_data, provider, last_sign_in_at, created_at, updated_at)
+  SELECT gen_random_uuid(), u.id, u.id::text,
+         jsonb_build_object('sub', u.id::text, 'email', u.email, 'email_verified', true),
+         'email', now(), now(), now()
+  FROM auth.users u WHERE u.id IN (v_admin, v_customer);
 
-    -- Insert 20 Customers (to keep seed fast, generating 100 is similar)
-    FOR i IN 1..20 LOOP
-        v_customer_id := uuid_generate_v4();
-        v_customer_ids := array_append(v_customer_ids, v_customer_id);
-        
-        INSERT INTO auth.users (id, instance_id, email, encrypted_password, email_confirmed_at, raw_app_meta_data, raw_user_meta_data, created_at, updated_at, role)
-        VALUES (v_customer_id, '00000000-0000-0000-0000-000000000000', 'customer'||i||'@example.com', crypt('password123', gen_salt('bf')), NOW(), '{"provider":"email","providers":["email"]}'::jsonb, jsonb_build_object('full_name', 'Customer '||i, 'role', 'customer'), NOW(), NOW(), 'authenticated');
-    END LOOP;
+  -- Admin cannot be chosen at sign-up, so set it here (auth.uid() is NULL in SQL, which the guard allows).
+  UPDATE public.profiles SET role = 'admin' WHERE id = v_admin;
 
-    -- Note: auth.users insert will trigger 'handle_new_user' to create profile records.
+  INSERT INTO public.vehicles (user_id, vehicle_number, vehicle_type, vehicle_model, vehicle_color)
+  VALUES (v_customer, 'TN01AB1234', 'car', 'Hatchback', 'White');
 
-    -- Update parking manager specific table
-    FOR i IN 1..5 LOOP
-        INSERT INTO parking_managers (user_id, business_name, business_phone, verification_status)
-        VALUES (v_manager_ids[i], 'Parking Business '||i, '+91987654321'||i, 'approved');
-    END LOOP;
+  INSERT INTO public.parking_lots (id, name, description, address, latitude, longitude, city, pincode, opening_time, closing_time, status)
+  VALUES (
+    v_lot, 'Vels clg lot', 'Sensor-monitored campus parking with an automatic gate.',
+    'Vels University, Pallavaram', 12.9487, 80.1408, 'Chennai', '600117', '00:00', '23:59:59', 'active'
+  );
 
-    -- Create 15 Parking Lots (3 per manager)
-    FOR i IN 1..5 LOOP
-        FOR j IN 1..3 LOOP
-            v_lot_id := uuid_generate_v4();
-            v_lot_ids := array_append(v_lot_ids, v_lot_id);
-            
-            INSERT INTO parking_lots (
-                id, manager_id, name, description, address, latitude, longitude, city, pincode, 
-                opening_time, closing_time, status, total_capacity, available_capacity
-            )
-            VALUES (
-                v_lot_id, (SELECT id FROM parking_managers WHERE user_id = v_manager_ids[i]),
-                'Lot ' || j || ' (Manager ' || i || ')', 'Premium parking facility located in city center.',
-                '12' || j || ' Main Street', 12.9716 + (random() * 0.1), 77.5946 + (random() * 0.1),
-                'Bangalore', '560001', '06:00:00', '23:00:00', 'active', 20, 20
-            );
-            
-            -- Create 20 Slots per Lot (total 300 slots)
-            FOR k IN 1..20 LOOP
-                v_slot_id := uuid_generate_v4();
-                v_slot_ids := array_append(v_slot_ids, v_slot_id);
-                
-                INSERT INTO parking_slots (
-                    id, parking_lot_id, slot_number, slot_type, vehicle_type, floor, status, hourly_price
-                )
-                VALUES (
-                    v_slot_id, v_lot_id, 'A' || k, 
-                    CASE WHEN k % 5 = 0 THEN 'ev'::slot_type WHEN k % 4 = 0 THEN 'premium'::slot_type ELSE 'regular'::slot_type END,
-                    CASE WHEN k % 3 = 0 THEN 'bike'::vehicle_type ELSE 'car'::vehicle_type END,
-                    '1', 'available', CASE WHEN k % 4 = 0 THEN 80.00 ELSE 50.00 END
-                );
-            END LOOP;
-        END LOOP;
-    END LOOP;
-
-    -- Create 1 Vehicle for each Customer
-    FOR i IN 1..20 LOOP
-        v_vehicle_id := uuid_generate_v4();
-        v_vehicle_ids := array_append(v_vehicle_ids, v_vehicle_id);
-        
-        INSERT INTO vehicles (id, user_id, vehicle_number, vehicle_type, vehicle_model, vehicle_color)
-        VALUES (
-            v_vehicle_id, v_customer_ids[i], 'TN0' || (i%9)+1 || 'AB12' || i, 
-            'car'::vehicle_type, 'Sedan', 'White'
-        );
-    END LOOP;
-
-    -- Create 50 Sample Bookings
-    FOR i IN 1..50 LOOP
-        v_customer_id := v_customer_ids[(i % 20) + 1];
-        v_vehicle_id := v_vehicle_ids[(i % 20) + 1];
-        v_slot_id := v_slot_ids[(i % 300) + 1];
-        
-        SELECT parking_lot_id INTO v_lot_id FROM parking_slots WHERE id = v_slot_id;
-
-        INSERT INTO bookings (
-            customer_id, parking_lot_id, parking_slot_id, vehicle_id, 
-            date, start_time, end_time, duration_hours, base_amount, total_amount, payment_status, booking_status
-        ) VALUES (
-            v_customer_id, v_lot_id, v_slot_id, v_vehicle_id,
-            CURRENT_DATE + ((i % 5) || ' days')::interval, 
-            '10:00:00', '12:00:00', 2.0, 100.00, 100.00, 
-            CASE WHEN i % 2 = 0 THEN 'paid'::payment_status ELSE 'pending'::payment_status END,
-            CASE WHEN i % 2 = 0 THEN 'confirmed'::booking_status ELSE 'pending'::booking_status END
-        );
-    END LOOP;
-
+  -- Fixed ids: these must match SLOT1_ID / SLOT2_ID in hardware/smart_parking/secrets.h
+  INSERT INTO public.parking_slots (id, parking_lot_id, slot_number, slot_type, vehicle_type, floor, status, hourly_price)
+  VALUES
+    ('faf4d4ad-edac-40ab-b188-f583afedad28', v_lot, 'S-001', 'regular', 'car', '1', 'available', 20),
+    ('c3595c66-5161-41c3-a4a2-fb7d46661792', v_lot, 'S-002', 'regular', 'car', '1', 'available', 20);
 END $$;

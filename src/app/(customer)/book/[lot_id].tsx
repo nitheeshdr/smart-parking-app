@@ -1,422 +1,198 @@
 import React, { useMemo, useState } from 'react';
-import {
-  View,
-  Text,
-  StyleSheet,
-  ScrollView,
-  ActivityIndicator,
-  Pressable,
-  Platform,
-  Alert,
-  TextInput,
-} from 'react-native';
+import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Button, Card, Separator, Spinner } from 'heroui-native';
-import { AppIcon } from '../../../components/app-icon';
-import { createAndPayForBooking, fetchParkingSlots } from '../../../features/parking/api/parkingApi';
+import { fetchBusyWindows, fetchLot, fetchSlots } from '../../../api/lots';
+import { addVehicle, bookSlot, fetchVehicles } from '../../../api/bookings';
+import { useRealtimeSync } from '../../../hooks/useRealtimeSync';
 import { useAuthStore } from '../../../stores/authStore';
-import { supabase } from '../../../lib/supabase';
+import { AppIcon } from '../../../components/app-icon';
+import { Button, Card, EmptyState, Field, Loading, Screen, SectionTitle } from '../../../components/ui';
+import { SlotGrid } from '../../../components/slot-grid';
 import { COLORS, SIZES } from '../../../constants/theme';
+import { addDays, errorMessage, formatDate, formatMoney, formatTime, hm, isoDate, isValidTime, minutesOf, nextHalfHour, timeFromMinutes } from '../../../lib/format';
 
-const today = new Date().toISOString().slice(0, 10);
+const DURATIONS = [1, 2, 3, 4, 6, 8];
 
-type SlotType = 'regular' | 'disabled' | 'ev' | 'premium' | 'reserved';
-const SLOT_ICON: Record<SlotType, 'car-outline' | 'accessibility-outline' | 'flash-outline' | 'star-outline' | 'lock-closed-outline'> = {
-  regular: 'car-outline',
-  disabled: 'accessibility-outline',
-  ev: 'flash-outline',
-  premium: 'star-outline',
-  reserved: 'lock-closed-outline',
-};
-
-export default function BookParkingScreen() {
-  const { lot_id } = useLocalSearchParams<{ lot_id: string }>();
+export default function BookSlotScreen() {
+  const { lot_id: lotId } = useLocalSearchParams<{ lot_id: string }>();
   const router = useRouter();
   const queryClient = useQueryClient();
-  const { user } = useAuthStore();
+  const userId = useAuthStore((s) => s.user?.id ?? '');
 
-  const [selectedSlot, setSelectedSlot] = useState<string | null>(null);
-  const [vehicleNumber, setVehicleNumber] = useState('');
+  const today = isoDate();
   const [date, setDate] = useState(today);
-  const [startTime, setStartTime] = useState('09:00');
-  const [endTime, setEndTime] = useState('10:00');
+  const [start, setStart] = useState(nextHalfHour());
+  const [hours, setHours] = useState(1);
+  const [pickedSlotId, setSlotId] = useState<string | null>(null);
+  const [pickedVehicleId, setVehicleId] = useState<string | null>(null);
+  const [newPlate, setNewPlate] = useState('');
 
-  const { data: slots, isLoading } = useQuery({
-    queryKey: ['slots', lot_id],
-    queryFn: () => fetchParkingSlots(lot_id),
-    enabled: !!lot_id,
-  });
+  useRealtimeSync(`customer_book_${lotId}`, ['parking_slots', 'bookings'], [['slots', lotId], ['busy', lotId]]);
 
-  const { data: bookingsForDate } = useQuery({
-    queryKey: ['lot_bookings_date', lot_id, date],
+  const lot = useQuery({ queryKey: ['lot', lotId], queryFn: () => fetchLot(lotId), enabled: !!lotId });
+  const slots = useQuery({ queryKey: ['slots', lotId], queryFn: () => fetchSlots(lotId), enabled: !!lotId });
+  const vehicles = useQuery({ queryKey: ['vehicles', userId], queryFn: () => fetchVehicles(userId), enabled: !!userId });
+
+  // Default to the first vehicle.
+  const vehicleId = pickedVehicleId ?? vehicles.data?.[0]?.id ?? null;
+
+  const validStart = isValidTime(start);
+  const endMinutes = validStart ? minutesOf(start) + hours * 60 : 0;
+  const end = timeFromMinutes(endMinutes);
+  const closing = lot.data ? minutesOf(hm(lot.data.closing_time)) : 24 * 60;
+  const opening = lot.data ? minutesOf(hm(lot.data.opening_time)) : 0;
+  const timeError = !validStart
+    ? 'Enter the start time as HH:MM (24-hour).'
+    : endMinutes > 24 * 60 - 1 || endMinutes > closing + 1
+      ? `This lot closes at ${hm(lot.data?.closing_time)}. Choose a shorter stay.`
+      : minutesOf(start) < opening
+        ? `This lot opens at ${hm(lot.data?.opening_time)}.`
+        : date === today && endMinutes <= minutesOf(timeFromMinutes(new Date().getHours() * 60 + new Date().getMinutes()))
+          ? 'That time has already passed.'
+          : '';
+
+  // Which slots are already booked during the chosen window?
+  const busy = useQuery({
+    queryKey: ['busy', lotId, date, slots.data?.map((s) => s.id).join(',')],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from('bookings')
-        .select('parking_slot_id, start_time, end_time, booking_status')
-        .eq('parking_lot_id', lot_id)
-        .eq('date', date)
-        .neq('booking_status', 'cancelled');
-      if (error) throw error;
-      return data || [];
+      const entries = await Promise.all((slots.data ?? []).map(async (s) => [s.id, await fetchBusyWindows(s.id, date)] as const));
+      return Object.fromEntries(entries);
     },
-    enabled: !!lot_id && !!date,
+    enabled: !!slots.data?.length,
   });
 
-  React.useEffect(() => {
-    if (!lot_id) return;
-    const channel = supabase
-      .channel(`lot_realtime_${lot_id}`)
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'bookings', filter: `parking_lot_id=eq.${lot_id}` },
-        () => {
-          queryClient.invalidateQueries({ queryKey: ['lot_bookings_date', lot_id, date] });
-          queryClient.invalidateQueries({ queryKey: ['slots', lot_id] });
-          queryClient.invalidateQueries({ queryKey: ['my_bookings'] });
-        }
-      )
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'parking_slots', filter: `parking_lot_id=eq.${lot_id}` },
-        () => {
-          queryClient.invalidateQueries({ queryKey: ['slots', lot_id] });
-        }
-      )
-      .subscribe();
+  const bookedIds = useMemo(() => {
+    const set = new Set<string>();
+    if (!validStart) return set;
+    const s = minutesOf(start);
+    for (const [id, windows] of Object.entries(busy.data ?? {})) {
+      if (windows.some((w) => minutesOf(hm(w.start_time)) < endMinutes && minutesOf(hm(w.end_time)) > s)) set.add(id);
+    }
+    return set;
+  }, [busy.data, start, endMinutes, validStart]);
 
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [lot_id, date, queryClient]);
+  // Ignore the selection if it just became unavailable (e.g. someone else booked it).
+  const slotId = pickedSlotId && !bookedIds.has(pickedSlotId) ? pickedSlotId : null;
 
-  const isSlotBookedForTime = (slotId: string) => {
-    if (!bookingsForDate || bookingsForDate.length === 0) return false;
-    const sStart = startTime.length === 5 ? `${startTime}:00` : startTime;
-    const sEnd = endTime.length === 5 ? `${endTime}:00` : endTime;
+  const slot = slots.data?.find((s) => s.id === slotId);
+  const amount = slot ? Number(slot.hourly_price) * hours : 0;
 
-    return bookingsForDate.some((b: any) => {
-      if (b.parking_slot_id !== slotId) return false;
-      const bStart = b.start_time;
-      const bEnd = b.end_time;
-      return bStart < sEnd && sStart < bEnd;
-    });
-  };
-
-  const selected = useMemo(() => slots?.find((s) => s.id === selectedSlot), [selectedSlot, slots]);
-
-  const booking = useMutation({
-    mutationFn: () => {
-      if (!user?.id || !selected) throw new Error('Select an available slot first.');
-      if (isSlotBookedForTime(selected.id)) {
-        throw new Error('This slot is already booked for the selected time range.');
-      }
-      return createAndPayForBooking({
-        customerId: user.id, lotId: lot_id, slotId: selected.id,
-        vehicleNumber, date, startTime, endTime,
-        hourlyPrice: Number(selected.hourly_price),
-      });
+  const addPlate = useMutation({
+    mutationFn: () => addVehicle(userId, newPlate, 'car'),
+    onSuccess: (v) => {
+      setNewPlate('');
+      setVehicleId(v.id);
+      queryClient.invalidateQueries({ queryKey: ['vehicles', userId] });
     },
-    onSuccess: (result) => {
-      queryClient.invalidateQueries({ queryKey: ['my_bookings', user?.id] });
-      queryClient.invalidateQueries({ queryKey: ['slots', lot_id] });
-      queryClient.invalidateQueries({ queryKey: ['lot_bookings_date', lot_id, date] });
-      router.replace(`/(customer)/booking/${result.booking_id}`);
-    },
-    onError: (err: Error) => Alert.alert('Booking failed', err.message),
+    onError: (e) => Alert.alert('Could not add vehicle', errorMessage(e)),
   });
 
-  if (isLoading) {
-    return (
-      <View style={styles.center}>
-        <Spinner size="lg" />
-        <Text style={styles.loadingTxt}>Loading slots…</Text>
-      </View>
-    );
-  }
+  const confirm = useMutation({
+    mutationFn: () => bookSlot({ lotId, slotId: slotId!, vehicleId: vehicleId!, date, start, end }),
+    onSuccess: (res) => {
+      queryClient.invalidateQueries({ queryKey: ['my_bookings'] });
+      queryClient.invalidateQueries({ queryKey: ['busy', lotId] });
+      router.replace(`/(customer)/booking/${res.booking_id}`);
+    },
+    onError: (e) => {
+      Alert.alert('Booking failed', errorMessage(e));
+      queryClient.invalidateQueries({ queryKey: ['busy', lotId] });
+    },
+  });
 
-  if (!slots || slots.length === 0) {
-    return (
-      <View style={styles.center}>
-        <AppIcon name="grid-outline" size={40} color={COLORS.textMuted} />
-        <Text style={styles.errorTxt}>No slots available for this lot.</Text>
-        <Pressable onPress={() => router.back()} style={styles.backLink}>
-          <AppIcon name="chevron-back" size={14} color={COLORS.primary} />
-          <Text style={styles.backLinkTxt}>Go back</Text>
-        </Pressable>
-      </View>
-    );
-  }
+  if (lot.isLoading || slots.isLoading) return <Screen title="Book a slot" onBack={() => router.back()} scroll={false}><Loading /></Screen>;
+  if (!lot.data) return <Screen title="Book a slot" onBack={() => router.back()}><EmptyState icon="alert-circle-outline" title="Lot not found" /></Screen>;
 
-  // Count free slots for the selected date/time
-  const availableCount = slots.filter((s) => s.status === 'available' && !isSlotBookedForTime(s.id)).length;
+  const canConfirm = !!slot && !!vehicleId && !timeError;
 
   return (
-    <View style={styles.container}>
-      {/* Header */}
-      <View style={styles.header}>
-        <Pressable
-          style={styles.backBtn}
-          onPress={() => router.back()}
-          accessibilityRole="button"
-          accessibilityLabel="Go back"
-        >
-          <AppIcon name="chevron-back" size={22} color={COLORS.text} />
-        </Pressable>
-        <Text style={styles.title}>Reserve a Slot</Text>
-        <View style={styles.availChip}>
-          <Text style={styles.availChipTxt}>{availableCount} free</Text>
+    <Screen title="Book a slot" subtitle={lot.data.name} onBack={() => router.back()}>
+      <SectionTitle>1 · When</SectionTitle>
+      <View style={styles.chips}>
+        {[0, 1, 2, 3].map((n) => {
+          const d = addDays(today, n);
+          const active = d === date;
+          return (
+            <Pressable key={d} onPress={() => setDate(d)} style={[styles.chip, active && styles.chipActive]} accessibilityRole="button">
+              <Text style={[styles.chipTxt, active && styles.chipTxtActive]}>{n === 0 ? 'Today' : n === 1 ? 'Tomorrow' : formatDate(d)}</Text>
+            </Pressable>
+          );
+        })}
+      </View>
+      <Field label="Start time (24h)" icon="time-outline" value={start} onChangeText={setStart} placeholder="HH:MM" keyboardType="numbers-and-punctuation" maxLength={5} />
+      <Text style={styles.label}>Duration</Text>
+      <View style={styles.chips}>
+        {DURATIONS.map((h) => (
+          <Pressable key={h} onPress={() => setHours(h)} style={[styles.chip, hours === h && styles.chipActive]} accessibilityRole="button">
+            <Text style={[styles.chipTxt, hours === h && styles.chipTxtActive]}>{h}h</Text>
+          </Pressable>
+        ))}
+      </View>
+      {validStart ? <Text style={styles.hint}>{formatTime(start)} – {formatTime(end)}</Text> : null}
+      {timeError ? <Text style={styles.error}>{timeError}</Text> : null}
+
+      <SectionTitle>2 · Pick a slot</SectionTitle>
+      {(slots.data ?? []).length === 0 ? (
+        <Text style={styles.hint}>This lot has no slots.</Text>
+      ) : (
+        <SlotGrid slots={slots.data ?? []} selectedId={slotId} disabledIds={bookedIds} onSelect={(s) => setSlotId(s.id)} />
+      )}
+      <Text style={styles.hint}>Slots show their live sensor state. Booked slots are greyed out for your time window.</Text>
+
+      <SectionTitle>3 · Vehicle</SectionTitle>
+      {(vehicles.data ?? []).map((v) => {
+        const active = v.id === vehicleId;
+        return (
+          <Pressable key={v.id} onPress={() => setVehicleId(v.id)} accessibilityRole="button" style={[styles.vehicle, active && styles.vehicleActive]}>
+            <AppIcon name={active ? 'radio-button-on' : 'radio-button-off'} size={20} color={active ? COLORS.primary : COLORS.textMuted} />
+            <Text style={styles.plate}>{v.vehicle_number}</Text>
+            <Text style={styles.hint}>{v.vehicle_type}</Text>
+          </Pressable>
+        );
+      })}
+      <View style={styles.addRow}>
+        <View style={{ flex: 1 }}>
+          <Field icon="add-circle-outline" placeholder="Add vehicle, e.g. TN01AB1234" value={newPlate} onChangeText={(t) => setNewPlate(t.toUpperCase())} autoCapitalize="characters" />
         </View>
+        <Button label="Add" small variant="secondary" disabled={newPlate.trim().length < 4} loading={addPlate.isPending} onPress={() => addPlate.mutate()} style={{ marginBottom: SIZES.md }} />
       </View>
 
-      <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
-
-        {/* ── Step 1: Choose slot ── */}
-        <View style={styles.stepHeader}>
-          <View style={styles.stepBadge}><Text style={styles.stepNum}>1</Text></View>
-          <Text style={styles.stepTitle}>Choose a space</Text>
+      <Card style={{ marginTop: SIZES.sm }}>
+        <View style={styles.sumRow}>
+          <Text style={styles.sumLbl}>Slot</Text>
+          <Text style={styles.sumVal}>{slot ? slot.slot_number : 'Not selected'}</Text>
         </View>
-
-        {/* Legend */}
-        <View style={styles.legend}>
-          {[
-            { label: 'Available', bg: COLORS.surface, border: COLORS.border, text: COLORS.text },
-            { label: 'Selected', bg: COLORS.primaryLight, border: COLORS.primary, text: COLORS.primary },
-            { label: 'Taken', bg: COLORS.surfaceHover, border: COLORS.border, text: COLORS.textDisabled },
-          ].map((l) => (
-            <View key={l.label} style={styles.legendItem}>
-              <View style={[styles.legendBox, { backgroundColor: l.bg, borderColor: l.border }]} />
-              <Text style={styles.legendTxt}>{l.label}</Text>
-            </View>
-          ))}
+        <View style={styles.sumRow}>
+          <Text style={styles.sumLbl}>Rate</Text>
+          <Text style={styles.sumVal}>{slot ? `${formatMoney(slot.hourly_price)} × ${hours}h` : '—'}</Text>
         </View>
-
-        {/* Slot grid */}
-        <View style={styles.grid}>
-          {slots.map((slot) => {
-            const isBooked = isSlotBookedForTime(slot.id);
-            const isAvailable = slot.status === 'available' && !isBooked;
-            const isSelected = selectedSlot === slot.id;
-            const icon = SLOT_ICON[slot.slot_type as SlotType] ?? 'car-outline';
-            return (
-              <Pressable
-                key={slot.id}
-                disabled={!isAvailable}
-                onPress={() => setSelectedSlot(slot.id)}
-                style={[
-                  styles.slotCell,
-                  !isAvailable && styles.slotCellTaken,
-                  isSelected && styles.slotCellSelected,
-                ]}
-                accessibilityRole="button"
-                accessibilityLabel={`Slot ${slot.slot_number}, ${isAvailable ? 'available' : 'taken'}`}
-              >
-                <AppIcon
-                  name={icon}
-                  size={16}
-                  color={isSelected ? COLORS.primary : !isAvailable ? COLORS.textDisabled : COLORS.textMuted}
-                />
-                <Text style={[
-                  styles.slotNum,
-                  !isAvailable && styles.slotNumTaken,
-                  isSelected && styles.slotNumSelected,
-                ]}>
-                  {slot.slot_number}
-                </Text>
-                <Text style={[
-                  styles.slotType,
-                  !isAvailable && styles.slotNumTaken,
-                  isSelected && { color: COLORS.primary },
-                ]}>
-                  {isBooked ? 'Booked' : slot.slot_type}
-                </Text>
-              </Pressable>
-            );
-          })}
+        <View style={[styles.sumRow, { marginTop: 4 }]}>
+          <Text style={[styles.sumLbl, { fontWeight: '800', color: COLORS.text }]}>Total</Text>
+          <Text style={[styles.sumVal, { fontSize: 20, color: COLORS.primary }]}>{formatMoney(amount)}</Text>
         </View>
+      </Card>
 
-        <Separator style={styles.sep} />
-
-        {/* ── Step 2: Details ── */}
-        <View style={styles.stepHeader}>
-          <View style={styles.stepBadge}><Text style={styles.stepNum}>2</Text></View>
-          <Text style={styles.stepTitle}>Booking details</Text>
-        </View>
-
-        <Card style={styles.formCard}>
-          <Field label="Vehicle registration">
-            <TextInput
-              style={styles.input}
-              value={vehicleNumber}
-              onChangeText={setVehicleNumber}
-              autoCapitalize="characters"
-              placeholder="TN 01 AB 1234"
-              placeholderTextColor={COLORS.textMuted}
-            />
-          </Field>
-
-          <Separator style={styles.sep} />
-
-          <Field label="Date (YYYY-MM-DD)">
-            <TextInput
-              style={styles.input}
-              value={date}
-              onChangeText={setDate}
-              placeholder="2026-10-01"
-              placeholderTextColor={COLORS.textMuted}
-            />
-          </Field>
-
-          <Separator style={styles.sep} />
-
-          <View style={styles.timeRow}>
-            <View style={{ flex: 1 }}>
-              <Field label="Start time">
-                <TextInput
-                  style={styles.input}
-                  value={startTime}
-                  onChangeText={setStartTime}
-                  placeholder="09:00"
-                  placeholderTextColor={COLORS.textMuted}
-                />
-              </Field>
-            </View>
-            <View style={styles.timeSep}>
-              <AppIcon name="arrow-forward-outline" size={16} color={COLORS.textMuted} />
-            </View>
-            <View style={{ flex: 1 }}>
-              <Field label="End time">
-                <TextInput
-                  style={styles.input}
-                  value={endTime}
-                  onChangeText={setEndTime}
-                  placeholder="10:00"
-                  placeholderTextColor={COLORS.textMuted}
-                />
-              </Field>
-            </View>
-          </View>
-        </Card>
-
-        {/* Selected slot summary */}
-        {selected && (
-          <Card style={styles.summaryCard}>
-            <View style={styles.summaryRow}>
-              <AppIcon name="checkmark-circle" size={18} color={COLORS.success} />
-              <Text style={styles.summaryTxt}>
-                Slot {selected.slot_number} · {selected.slot_type} ·{'\u20B9'}{selected.hourly_price}/hr
-              </Text>
-            </View>
-          </Card>
-        )}
-
-        <View style={{ height: 130 }} />
-      </ScrollView>
-
-      {/* Footer */}
-      <View style={styles.footer}>
-        <View>
-          <Text style={styles.footerPrice}>
-            {selected ? `\u20B9${selected.hourly_price}/hr` : 'Select a slot'}
-          </Text>
-          <Text style={styles.footerNote}>Secure payment · E-ticket included</Text>
-        </View>
-        <Button
-          variant="primary"
-          isDisabled={!selectedSlot || booking.isPending}
-          onPress={() => booking.mutate()}
-          style={styles.confirmBtn}
-        >
-          <View style={styles.confirmBtnInner}>
-            <AppIcon name="card-outline" size={16} color="#fff" />
-            <Text style={styles.confirmBtnTxt}>
-              {booking.isPending ? 'Processing…' : 'Confirm & Pay'}
-            </Text>
-          </View>
-        </Button>
-      </View>
-    </View>
-  );
-}
-
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <View>
-      <Text style={styles.fieldLbl}>{label}</Text>
-      {children}
-    </View>
+      <Button label={`Pay ${formatMoney(amount)} & confirm`} icon="shield-checkmark-outline" disabled={!canConfirm} loading={confirm.isPending} onPress={() => confirm.mutate()} />
+      <Text style={[styles.hint, { textAlign: 'center', marginTop: SIZES.sm }]}>Demo payment — no real money is charged.</Text>
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: COLORS.background },
-  center: { flex: 1, justifyContent: 'center', alignItems: 'center', gap: 12 },
-  loadingTxt: { color: COLORS.textMuted, fontSize: 14 },
-  errorTxt: { color: COLORS.textMuted, fontSize: 15, textAlign: 'center', paddingHorizontal: SIZES.lg },
-  backLink: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 8 },
-  backLinkTxt: { color: COLORS.primary, fontWeight: '700' },
-
-  header: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: SIZES.lg, paddingTop: 56, paddingBottom: SIZES.md,
-    backgroundColor: COLORS.surface, borderBottomWidth: 1, borderBottomColor: COLORS.border,
-  },
-  backBtn: { width: 40, height: 40, justifyContent: 'center', alignItems: 'center' },
-  title: { fontSize: 18, fontWeight: '900', color: COLORS.text },
-  availChip: { backgroundColor: COLORS.successLight, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 20 },
-  availChipTxt: { fontSize: 12, fontWeight: '700', color: COLORS.success },
-
-  scroll: { padding: SIZES.lg, paddingBottom: 140 },
-  stepHeader: { flexDirection: 'row', alignItems: 'center', gap: SIZES.sm, marginBottom: SIZES.md },
-  stepBadge: { width: 26, height: 26, borderRadius: 13, backgroundColor: COLORS.primary, justifyContent: 'center', alignItems: 'center' },
-  stepNum: { color: '#fff', fontSize: 13, fontWeight: '900' },
-  stepTitle: { fontSize: 16, fontWeight: '800', color: COLORS.text },
-
-  legend: { flexDirection: 'row', gap: SIZES.md, marginBottom: SIZES.md },
-  legendItem: { flexDirection: 'row', alignItems: 'center', gap: 5 },
-  legendBox: { width: 14, height: 14, borderRadius: 4, borderWidth: 1.5 },
-  legendTxt: { fontSize: 12, color: COLORS.textMuted },
-
-  grid: { flexDirection: 'row', flexWrap: 'wrap', gap: SIZES.sm, marginBottom: SIZES.md },
-  slotCell: {
-    width: '30.6%', aspectRatio: 1, borderRadius: SIZES.radius,
-    backgroundColor: COLORS.surface, borderWidth: 1.5, borderColor: COLORS.border,
-    alignItems: 'center', justifyContent: 'center', gap: 4,
-  },
-  slotCellTaken: { backgroundColor: COLORS.surfaceHover, opacity: 0.5 },
-  slotCellSelected: { backgroundColor: COLORS.primaryLight, borderColor: COLORS.primary, borderWidth: 2 },
-  slotNum: { fontSize: 15, fontWeight: '900', color: COLORS.text },
-  slotNumTaken: { color: COLORS.textDisabled },
-  slotNumSelected: { color: COLORS.primary },
-  slotType: { fontSize: 10, color: COLORS.textMuted, textTransform: 'capitalize' },
-
-  sep: { marginVertical: SIZES.md },
-
-  formCard: { padding: SIZES.md, borderWidth: 1, borderColor: COLORS.border, backgroundColor: COLORS.surface, gap: SIZES.xs },
-  fieldLbl: { fontSize: 13, fontWeight: '700', color: COLORS.text, marginBottom: 6 },
-  input: {
-    backgroundColor: COLORS.background, borderWidth: 1, borderColor: COLORS.border,
-    borderRadius: SIZES.radius, paddingHorizontal: SIZES.md, height: 46, color: COLORS.text, fontSize: 15,
-  },
-  timeRow: { flexDirection: 'row', alignItems: 'center', gap: SIZES.sm },
-  timeSep: { paddingTop: 20 },
-
-  summaryCard: { marginTop: SIZES.md, padding: SIZES.md, borderWidth: 1, borderColor: COLORS.success + '40', backgroundColor: COLORS.successLight },
-  summaryRow: { flexDirection: 'row', alignItems: 'center', gap: SIZES.sm },
-  summaryTxt: { fontSize: 14, fontWeight: '700', color: COLORS.success },
-
-  footer: {
-    position: 'absolute', bottom: 0, left: 0, right: 0,
-    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
-    paddingHorizontal: SIZES.lg,
-    paddingBottom: Platform.OS === 'ios' ? SIZES.xxl : SIZES.lg,
-    paddingTop: SIZES.md,
-    backgroundColor: COLORS.surface, borderTopWidth: 1, borderTopColor: COLORS.border,
-    shadowColor: '#000', shadowOpacity: 0.08, shadowRadius: 12, shadowOffset: { width: 0, height: -4 }, elevation: 10,
-  },
-  footerPrice: { fontSize: 18, fontWeight: '900', color: COLORS.primary },
-  footerNote: { fontSize: 11, color: COLORS.textMuted, marginTop: 2 },
-  confirmBtn: { height: 50, borderRadius: SIZES.radiusMd, paddingHorizontal: SIZES.md },
-  confirmBtnInner: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  confirmBtnTxt: { color: '#fff', fontSize: 15, fontWeight: '800' },
+  label: { fontSize: 13, fontWeight: '700', color: COLORS.text, marginBottom: 6 },
+  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: SIZES.sm, marginBottom: SIZES.md },
+  chip: { paddingHorizontal: 14, paddingVertical: 9, borderRadius: 20, backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border },
+  chipActive: { backgroundColor: COLORS.primaryLight, borderColor: COLORS.primary },
+  chipTxt: { fontSize: 13, fontWeight: '700', color: COLORS.textSecondary },
+  chipTxtActive: { color: COLORS.primary },
+  hint: { fontSize: 12, color: COLORS.textMuted, marginTop: 4, marginBottom: SIZES.sm },
+  error: { fontSize: 13, color: COLORS.error, fontWeight: '600', marginBottom: SIZES.sm },
+  vehicle: { flexDirection: 'row', alignItems: 'center', gap: SIZES.sm, padding: SIZES.md, borderRadius: SIZES.radius, backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border, marginBottom: SIZES.sm },
+  vehicleActive: { borderColor: COLORS.primary, backgroundColor: COLORS.primaryLight },
+  plate: { flex: 1, fontSize: 15, fontWeight: '800', color: COLORS.text },
+  addRow: { flexDirection: 'row', alignItems: 'flex-start', gap: SIZES.sm, marginTop: SIZES.sm },
+  sumRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 4 },
+  sumLbl: { fontSize: 14, color: COLORS.textMuted },
+  sumVal: { fontSize: 14, fontWeight: '700', color: COLORS.text },
 });
