@@ -2,7 +2,6 @@ import React, { useMemo, useState } from 'react';
 import { useRouter } from 'expo-router';
 import { useQuery } from '@tanstack/react-query';
 import { fetchMyBookings } from '../../../api/bookings';
-import { useRealtimeSync } from '../../../hooks/useRealtimeSync';
 import { useAuthStore } from '../../../stores/authStore';
 import { Button, EmptyState, ErrorState, Loading, Screen, Segmented } from '../../../components/ui';
 import { BookingCard } from '../../../components/booking-card';
@@ -12,7 +11,6 @@ export default function MyBookingsScreen() {
   const userId = useAuthStore((s) => s.user?.id ?? '');
   const [tab, setTab] = useState<'upcoming' | 'past'>('upcoming');
 
-  useRealtimeSync(`customer_bookings_${userId}`, ['bookings'], [['my_bookings']]);
   const { data, isLoading, error, refetch, isRefetching } = useQuery({ queryKey: ['my_bookings', userId], queryFn: () => fetchMyBookings(userId), enabled: !!userId });
 
   const list = useMemo(() => {

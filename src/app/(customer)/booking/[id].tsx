@@ -4,7 +4,6 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import QRCode from 'react-native-qrcode-svg';
 import { cancelBooking, fetchBooking } from '../../../api/bookings';
-import { useRealtimeSync } from '../../../hooks/useRealtimeSync';
 import { Badge, Button, Card, ErrorState, Loading, Row, Screen } from '../../../components/ui';
 import { BOOKING_TONE } from '../../../components/ui/status';
 import { COLORS, SIZES } from '../../../constants/theme';
@@ -15,7 +14,6 @@ export default function TicketScreen() {
   const router = useRouter();
   const queryClient = useQueryClient();
 
-  useRealtimeSync(`ticket_${id}`, ['bookings'], [['booking', id], ['my_bookings']]);
   const { data: b, isLoading, error, refetch } = useQuery({ queryKey: ['booking', id], queryFn: () => fetchBooking(id), enabled: !!id });
 
   const cancel = useMutation({

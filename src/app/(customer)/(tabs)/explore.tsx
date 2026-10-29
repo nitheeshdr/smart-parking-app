@@ -3,7 +3,6 @@ import { StyleSheet, Text } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useQuery } from '@tanstack/react-query';
 import { fetchActiveLots } from '../../../api/lots';
-import { useRealtimeSync } from '../../../hooks/useRealtimeSync';
 import { useAuthStore } from '../../../stores/authStore';
 import { EmptyState, ErrorState, Field, Loading, LiveDot, Screen, Segmented } from '../../../components/ui';
 import { LotCard } from '../../../components/lot-card';
@@ -15,7 +14,6 @@ export default function ExploreScreen() {
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<'all' | 'free'>('all');
 
-  useRealtimeSync('customer_explore', ['parking_lots', 'parking_slots'], [['lots']]);
   const { data: lots, isLoading, error, refetch, isRefetching } = useQuery({ queryKey: ['lots'], queryFn: fetchActiveLots });
 
   const filtered = useMemo(() => {

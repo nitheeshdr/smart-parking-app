@@ -1,10 +1,12 @@
 /*
  * Smart Parking - ESP8266 (NodeMCU) firmware
  *
- *   IR entry (D1) / IR exit (D2)  -> directional gate logic -> servo (D5) + live car count
- *   IR slot 1 (D6) / IR slot 2 (D7) -> debounced occupancy -> Supabase RPC set_slot_occupancy()
+ *   IR entry (D1) / IR exit (D2)    -> directional gate logic -> servo (D5) + live car count
+ *   IR slot 1 (D6) / IR slot 2 (D7) -> debounced occupancy
  *
- * The database pushes every change to the admin, manager and customer apps over Supabase Realtime.
+ * Every change (slot state, gate open/closed, car count) is pushed to Supabase in ONE request
+ * (RPC hardware_update) over a kept-open TLS connection, so it reaches the admin and customer apps
+ * through Supabase Realtime within a fraction of a second.
  * Sensors are active LOW (LOW = obstacle detected).
  * Copy secrets.example.h to secrets.h and fill it in before building.
  */
@@ -21,13 +23,13 @@ const int IR_SLOT1  = D6;
 const int IR_SLOT2  = D7;
 const int SERVO_PIN = D5;
 
-// ───────────── Timing ─────────────
+// ───────────── Timing (ms) ─────────────
 const unsigned long FLOW_TIMEOUT      = 5000;   // max time for a car to cross both gate sensors
 const unsigned long GATE_CLEAR_TIME   = 700;    // both gate sensors must stay clear this long before re-arming
 const unsigned long GATE_OPEN_TIME    = 3000;   // servo stays open this long
-const unsigned long SLOT_DEBOUNCE     = 1000;   // stable reading needed before a slot changes state
-const unsigned long RETRY_DELAY       = 4000;   // wait after a failed request
-const unsigned long RESYNC_INTERVAL   = 60000;  // re-send slot states periodically (self-healing)
+const unsigned long SLOT_DEBOUNCE     = 300;    // stable reading needed before a slot changes state
+const unsigned long RETRY_DELAY       = 2000;   // wait after a failed request
+const unsigned long HEARTBEAT         = 15000;  // re-send full state (keeps the TLS session warm, self-heals)
 const unsigned long WIFI_RETRY_DELAY  = 10000;
 const int SERVO_CLOSED = 0;
 const int SERVO_OPEN   = 90;
@@ -38,7 +40,6 @@ GateState gateState = IDLE;
 unsigned long gateStateSince = 0;
 unsigned long clearSince = 0;
 int carCount = 0;
-bool gateDirty = true;
 
 Servo gateServo;
 bool gateOpen = false;
@@ -53,19 +54,19 @@ struct Slot {
   bool pending;         // a different reading is being debounced
   bool pendingState;
   unsigned long pendingSince;
-  bool dirty;           // needs to be sent to Supabase
 };
 Slot slots[2] = {
-  { SLOT1_ID, IR_SLOT1, "Slot 1", false, false, false, 0, true },
-  { SLOT2_ID, IR_SLOT2, "Slot 2", false, false, false, 0, true },
+  { SLOT1_ID, IR_SLOT1, "Slot 1", false, false, false, 0 },
+  { SLOT2_ID, IR_SLOT2, "Slot 2", false, false, false, 0 },
 };
 
 // ───────────── Supabase session ─────────────
 String accessToken;
 unsigned long tokenRefreshAt = 0;   // millis() deadline
 bool haveToken = false;
+bool stateDirty = true;             // something changed and still has to be sent
 unsigned long nextRequestAt = 0;
-unsigned long lastResync = 0;
+unsigned long lastPush = 0;
 unsigned long lastWifiAttempt = 0;
 
 WiFiClientSecure tls;
@@ -77,6 +78,14 @@ void openGate() {
   gateServo.write(SERVO_OPEN);
   gateOpen = true;
   gateOpenedAt = millis();
+  stateDirty = true;               // tell the apps the gate is open right away
+}
+
+void closeGate() {
+  gateServo.write(SERVO_CLOSED);
+  gateOpen = false;
+  stateDirty = true;
+  Serial.println("[Gate] Closed");
 }
 
 void setGateState(GateState next) {
@@ -103,15 +112,18 @@ String jsonField(const String& body, const char* key) {
 // ───────────── Supabase calls ─────────────
 bool signIn() {
   HTTPClient http;
-  http.setTimeout(8000);
+  http.setReuse(true);
+  http.setTimeout(10000);
   if (!http.begin(tls, String(SUPABASE_URL) + "/auth/v1/token?grant_type=password")) return false;
   http.addHeader("Content-Type", "application/json");
   http.addHeader("apikey", SUPABASE_ANON_KEY);
   String body = String("{\"email\":\"") + SUPABASE_EMAIL + "\",\"password\":\"" + SUPABASE_PASSWORD + "\"}";
   int code = http.POST(body);
   if (code != 200) {
-    Serial.printf("[Supabase] Sign-in failed (HTTP %d)\n", code);
+    Serial.printf("[Supabase] Sign-in failed (HTTP %d, %s, free heap %u)\n", code,
+                  code < 0 ? HTTPClient::errorToString(code).c_str() : "server error", ESP.getFreeHeap());
     http.end();
+    tls.stop();
     return false;
   }
   String resp = http.getString();
@@ -126,58 +138,58 @@ bool signIn() {
   return true;
 }
 
-// POST /rest/v1/rpc/<fn>. Returns true on success. Clears the token on 401 so the next try re-signs in.
-bool callRpc(const char* fn, const String& json) {
-  if (!haveToken || reached(tokenRefreshAt)) {
-    if (!signIn()) return false;
-  }
+// POST /rest/v1/rpc/<fn> on the kept-open TLS connection. Returns the HTTP code (<0 = transport error).
+int postRpc(const char* fn, const String& json, String& resp) {
   HTTPClient http;
-  http.setTimeout(8000);
-  if (!http.begin(tls, String(SUPABASE_URL) + "/rest/v1/rpc/" + fn)) return false;
+  http.setReuse(true);
+  http.setTimeout(10000);
+  if (!http.begin(tls, String(SUPABASE_URL) + "/rest/v1/rpc/" + fn)) return -1;
   http.addHeader("Content-Type", "application/json");
   http.addHeader("apikey", SUPABASE_ANON_KEY);
   http.addHeader("Authorization", "Bearer " + accessToken);
   int code = http.POST(json);
-  String resp = http.getString();
+  resp = code > 0 ? http.getString() : "";
   http.end();
-  if (code == 401 || code == 403) { haveToken = false; Serial.printf("[Supabase] %s: auth rejected (%d)\n", fn, code); return false; }
-  if (code < 200 || code >= 300) { Serial.printf("[Supabase] %s failed (HTTP %d) %s\n", fn, code, resp.c_str()); return false; }
-  // Functions return {"status":"success"|"ignored"|"error", ...}
-  if (resp.indexOf("\"error\"") >= 0) { Serial.printf("[Supabase] %s error: %s\n", fn, resp.c_str()); return false; }
+  return code;
+}
+
+// Sends slots + gate counter in one request. Retries once on a dropped connection.
+bool pushState() {
+  if (!haveToken || reached(tokenRefreshAt)) {
+    if (!signIn()) return false;
+  }
+
+  String body = String("{\"p_slots\":[");
+  for (int i = 0; i < 2; i++) {
+    if (i) body += ",";
+    body += String("{\"id\":\"") + slots[i].id + "\",\"occupied\":" + (slots[i].occupied ? "true" : "false") + "}";
+  }
+  body += String("],\"p_car_count\":") + carCount + ",\"p_gate_status\":\"" + (gateOpen ? "open" : "closed") + "\"}";
+
+  String resp;
+  int code = postRpc("hardware_update", body, resp);
+  if (code < 0) {                    // connection dropped (idle timeout etc.) -> reconnect and retry once
+    tls.stop();
+    code = postRpc("hardware_update", body, resp);
+  }
+  if (code == 401 || code == 403) { haveToken = false; Serial.printf("[Supabase] Auth rejected (%d)\n", code); return false; }
+  if (code < 200 || code >= 300) {
+    Serial.printf("[Supabase] Update failed (HTTP %d%s%s)\n", code, code < 0 ? " " : "", code < 0 ? HTTPClient::errorToString(code).c_str() : "");
+    if (code < 0) tls.stop();
+    return false;
+  }
+  if (resp.indexOf("\"error\"") >= 0) { Serial.printf("[Supabase] Update error: %s\n", resp.c_str()); return false; }
+  Serial.printf("[Supabase] Synced  S1=%s S2=%s cars=%d gate=%s\n", slots[0].occupied ? "occ" : "free", slots[1].occupied ? "occ" : "free", carCount, gateOpen ? "open" : "closed");
   return true;
 }
 
-bool pushSlot(Slot& s) {
-  String body = String("{\"p_slot_id\":\"") + s.id + "\",\"p_occupied\":" + (s.occupied ? "true" : "false") + "}";
-  bool ok = callRpc("set_slot_occupancy", body);
-  if (ok) Serial.printf("[Supabase] %s -> %s\n", s.name, s.occupied ? "occupied" : "available");
-  return ok;
-}
-
-bool pushGate() {
-  String body = String("{\"p_car_count\":") + carCount + ",\"p_gate_status\":\"" + (gateOpen ? "open" : "closed") + "\"}";
-  return callRpc("set_gate_state", body);
-}
-
-// Sends at most one pending update per call; never while the gate is moving (keeps the servo on time).
 void syncSupabase() {
   if (WiFi.status() != WL_CONNECTED) return;
-  if (!reached(nextRequestAt)) return;
-  if (gateOpen || gateState != IDLE) return;
-
-  if (reached(lastResync + RESYNC_INTERVAL)) {
-    lastResync = millis();
-    for (Slot& s : slots) s.dirty = true;
-    gateDirty = true;
-  }
-  for (Slot& s : slots) {
-    if (!s.dirty) continue;
-    if (pushSlot(s)) s.dirty = false; else nextRequestAt = millis() + RETRY_DELAY;
-    return;
-  }
-  if (gateDirty) {
-    if (pushGate()) gateDirty = false; else nextRequestAt = millis() + RETRY_DELAY;
-  }
+  if (reached(lastPush + HEARTBEAT)) stateDirty = true;
+  if (!stateDirty || !reached(nextRequestAt)) return;
+  stateDirty = false;                // anything that changes while we send sets it again
+  if (pushState()) lastPush = millis();
+  else { stateDirty = true; nextRequestAt = millis() + RETRY_DELAY; }
 }
 
 // ───────────── Gate logic ─────────────
@@ -198,7 +210,7 @@ void updateGate(bool entryBlocked, bool exitBlocked) {
     case ENTRY_WAIT_EXIT_SENSOR:
       if (exitBlocked) {
         carCount++;
-        gateDirty = true;
+        stateDirty = true;
         Serial.printf("[Gate] Entry confirmed. Cars inside: %d\n", carCount);
         setGateState(CLEARING);
       } else if (millis() - gateStateSince > FLOW_TIMEOUT) {
@@ -210,7 +222,7 @@ void updateGate(bool entryBlocked, bool exitBlocked) {
     case EXIT_WAIT_ENTRY_SENSOR:
       if (entryBlocked) {
         if (carCount > 0) carCount--;
-        gateDirty = true;
+        stateDirty = true;
         Serial.printf("[Gate] Exit confirmed. Cars inside: %d\n", carCount);
         setGateState(CLEARING);
       } else if (millis() - gateStateSince > FLOW_TIMEOUT) {
@@ -242,7 +254,8 @@ void updateSlot(Slot& s) {
   } else if (millis() - s.pendingSince >= SLOT_DEBOUNCE) {
     s.occupied = reading;
     s.pending = false;
-    s.dirty = true;
+    stateDirty = true;
+    nextRequestAt = 0;               // send immediately
     Serial.printf("[Sensor] %s is now %s\n", s.name, s.occupied ? "OCCUPIED" : "AVAILABLE");
   }
 }
@@ -251,6 +264,7 @@ void updateSlot(Slot& s) {
 void connectWifi() {
   WiFi.mode(WIFI_STA);
   WiFi.setAutoReconnect(true);
+  WiFi.setSleepMode(WIFI_NONE_SLEEP);   // lowest latency
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   lastWifiAttempt = millis();
 }
@@ -271,7 +285,7 @@ void setup() {
   for (Slot& s : slots) s.occupied = (digitalRead(s.pin) == LOW);
 
   tls.setInsecure();               // no certificate pinning on the ESP8266
-  tls.setBufferSizes(1024, 512);
+  // Do NOT shrink the TLS buffers: Supabase sends full-size TLS records, which makes the connection drop (HTTP -5).
 
   Serial.printf("[WiFi] Connecting to %s", WIFI_SSID);
   connectWifi();
@@ -279,7 +293,7 @@ void setup() {
   while (WiFi.status() != WL_CONNECTED && millis() - start < 20000) { delay(300); Serial.print("."); }
   if (WiFi.status() == WL_CONNECTED) Serial.println("\n[WiFi] Connected, IP " + WiFi.localIP().toString());
   else Serial.println("\n[WiFi] Not connected yet - will keep retrying in the background");
-  lastResync = millis();
+  lastPush = millis();
 }
 
 void loop() {
@@ -290,11 +304,7 @@ void loop() {
   for (Slot& s : slots) updateSlot(s);
 
   // Non-blocking servo close
-  if (gateOpen && millis() - gateOpenedAt >= GATE_OPEN_TIME) {
-    gateServo.write(SERVO_CLOSED);
-    gateOpen = false;
-    Serial.println("[Gate] Closed");
-  }
+  if (gateOpen && millis() - gateOpenedAt >= GATE_OPEN_TIME) closeGate();
 
   if (WiFi.status() != WL_CONNECTED && millis() - lastWifiAttempt > WIFI_RETRY_DELAY) {
     Serial.println("[WiFi] Lost connection, reconnecting");
@@ -302,5 +312,5 @@ void loop() {
   }
   syncSupabase();
 
-  delay(20);
+  delay(5);
 }

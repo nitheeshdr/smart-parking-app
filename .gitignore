@@ -46,3 +46,4 @@ yarn-error.*
 
 # Board secrets (copy hardware/smart_parking/secrets.example.h)
 hardware/smart_parking/secrets.h
+hardware/smart_parking_hardcoded*/

@@ -2,7 +2,6 @@ import React, { useMemo, useState } from 'react';
 import { Alert, View } from 'react-native';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { cancelBooking, checkInBooking, checkOutBooking, fetchStaffBookings } from '../../api/bookings';
-import { useRealtimeSync } from '../../hooks/useRealtimeSync';
 import { Button, EmptyState, ErrorState, Loading, Screen, Segmented } from '../../components/ui';
 import { BookingCard } from '../../components/booking-card';
 import { errorMessage } from '../../lib/format';
@@ -14,7 +13,6 @@ export default function AdminBookings() {
   const queryClient = useQueryClient();
   const [tab, setTab] = useState<Tab>('now');
 
-  useRealtimeSync('admin_bookings', ['bookings'], [['all_bookings'], ['staff_bookings']]);
   const { data, isLoading, error, refetch, isRefetching } = useQuery({ queryKey: ['all_bookings'], queryFn: () => fetchStaffBookings({ limit: 200 }) });
 
   const run = useMutation({

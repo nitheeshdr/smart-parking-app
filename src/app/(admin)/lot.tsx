@@ -3,7 +3,6 @@ import { Alert, StyleSheet, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { fetchAllLots, fetchSlots, setSlotOccupancy, setSlotStatus, updateSlotPrice } from '../../api/lots';
-import { useRealtimeSync } from '../../hooks/useRealtimeSync';
 import { Badge, Button, Card, EmptyState, ErrorState, Field, LiveDot, Loading, Row, Screen, SectionTitle } from '../../components/ui';
 import { SLOT_TONE } from '../../components/ui/status';
 import { SlotGrid } from '../../components/slot-grid';
@@ -18,7 +17,6 @@ export default function LotScreen() {
   const [selected, setSelected] = useState<string | null>(null);
   const [price, setPrice] = useState('');
 
-  useRealtimeSync('admin_lot', ['parking_lots', 'parking_slots'], [['all_lots'], ['lot_slots']]);
   const lots = useQuery({ queryKey: ['all_lots'], queryFn: fetchAllLots });
   const lot = lots.data?.[0];
   const slots = useQuery({ queryKey: ['lot_slots', lot?.id], queryFn: () => fetchSlots(lot!.id), enabled: !!lot });

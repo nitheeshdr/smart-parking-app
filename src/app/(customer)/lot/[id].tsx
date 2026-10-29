@@ -3,7 +3,7 @@ import { StyleSheet, Text, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useQuery } from '@tanstack/react-query';
 import { fetchLot, fetchSlots } from '../../../api/lots';
-import { useRealtimeSync } from '../../../hooks/useRealtimeSync';
+import { fetchGateSystem } from '../../../api/bookings';
 import { Badge, Button, Card, ErrorState, LiveDot, Loading, Row, Screen, SectionTitle, StatCard, StatGrid } from '../../../components/ui';
 import { SlotGrid } from '../../../components/slot-grid';
 import { lotTone } from '../../../components/lot-card';
@@ -14,9 +14,9 @@ export default function LotDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
 
-  useRealtimeSync(`customer_lot_${id}`, ['parking_slots', 'parking_lots'], [['lot', id], ['slots', id], ['lots']]);
   const lot = useQuery({ queryKey: ['lot', id], queryFn: () => fetchLot(id), enabled: !!id });
   const slots = useQuery({ queryKey: ['slots', id], queryFn: () => fetchSlots(id), enabled: !!id });
+  const gate = useQuery({ queryKey: ['gate'], queryFn: fetchGateSystem });
 
   if (lot.isLoading || slots.isLoading) return <Screen title="Parking lot" onBack={() => router.back()} scroll={false}><Loading /></Screen>;
   if (lot.error || !lot.data) return <Screen title="Parking lot" onBack={() => router.back()}><ErrorState error={lot.error ?? new Error('Lot not found.')} onRetry={lot.refetch} /></Screen>;
@@ -44,6 +44,14 @@ export default function LotDetailScreen() {
 
       <Card>
         <Row icon="pulse-outline" label="Status" value={<Badge tone={lotTone(l)} />} />
+        {gate.data ? (
+          <Row
+            icon="swap-vertical-outline"
+            label="Gate"
+            value={`${gate.data.gate_status === 'open' ? 'Open' : 'Closed'} · ${gate.data.car_count} car${gate.data.car_count === 1 ? '' : 's'} inside`}
+            color={gate.data.gate_status === 'open' ? COLORS.success : undefined}
+          />
+        ) : null}
         <Row icon="time-outline" label="Open" value={`${hm(l.opening_time)} – ${hm(l.closing_time)}`} />
         <Row icon="cash-outline" label="Price" value={list.length ? `from ${formatMoney(from)}/hr` : '—'} />
         {l.description ? <Text style={styles.desc}>{l.description}</Text> : null}

@@ -7,6 +7,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { supabase } from '../lib/supabase';
 import { homeRouteFor, useAuthStore } from '../stores/authStore';
+import { LiveSync } from '../lib/live-sync';
 
 import '../global.css';
 
@@ -55,6 +56,7 @@ export default function RootLayout() {
       <QueryClientProvider client={queryClient}>
         <GestureHandlerRootView style={{ flex: 1 }}>
           <HeroUINativeProvider>
+            {session ? <LiveSync /> : null}
             <Stack screenOptions={{ headerShown: false }} />
             <StatusBar style="dark" />
           </HeroUINativeProvider>

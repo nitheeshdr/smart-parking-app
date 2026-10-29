@@ -3,8 +3,6 @@ import { StyleSheet, Text, View } from 'react-native';
 import { useQuery } from '@tanstack/react-query';
 import { fetchAllLots, fetchSlotsForLots } from '../api/lots';
 import { fetchGateSystem, fetchStaffBookings } from '../api/bookings';
-import { useRealtimeSync } from '../hooks/useRealtimeSync';
-import { useAuthStore } from '../stores/authStore';
 import { AppIcon } from './app-icon';
 import { BookingCard } from './booking-card';
 import { SlotGrid } from './slot-grid';
@@ -17,9 +15,6 @@ import { formatDateTime, formatMoney, isoDate } from '../lib/format';
  * gate counter, slot availability per lot (straight from the sensors) and booking activity.
  */
 export function StaffOverview() {
-  const userId = useAuthStore((s) => s.user?.id ?? '');
-
-  useRealtimeSync(`staff_overview_${userId}`, ['parking_slots', 'parking_lots', 'bookings', 'parking_system'], [['all_lots'], ['staff_slots'], ['staff_bookings'], ['gate']]);
 
   const lots = useQuery({ queryKey: ['all_lots'], queryFn: fetchAllLots });
   const lotIds = (lots.data ?? []).map((l) => l.id);

@@ -4,7 +4,6 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { fetchBusyWindows, fetchLot, fetchSlots } from '../../../api/lots';
 import { addVehicle, bookSlot, fetchVehicles } from '../../../api/bookings';
-import { useRealtimeSync } from '../../../hooks/useRealtimeSync';
 import { useAuthStore } from '../../../stores/authStore';
 import { AppIcon } from '../../../components/app-icon';
 import { Button, Card, EmptyState, Field, Loading, Screen, SectionTitle } from '../../../components/ui';
@@ -27,8 +26,6 @@ export default function BookSlotScreen() {
   const [pickedSlotId, setSlotId] = useState<string | null>(null);
   const [pickedVehicleId, setVehicleId] = useState<string | null>(null);
   const [newPlate, setNewPlate] = useState('');
-
-  useRealtimeSync(`customer_book_${lotId}`, ['parking_slots', 'bookings'], [['slots', lotId], ['busy', lotId]]);
 
   const lot = useQuery({ queryKey: ['lot', lotId], queryFn: () => fetchLot(lotId), enabled: !!lotId });
   const slots = useQuery({ queryKey: ['slots', lotId], queryFn: () => fetchSlots(lotId), enabled: !!lotId });

@@ -5,7 +5,6 @@ import { useQuery } from '@tanstack/react-query';
 import * as Location from 'expo-location';
 import MapplsGL from 'mappls-map-react-native';
 import { fetchActiveLots } from '../../../api/lots';
-import { useRealtimeSync } from '../../../hooks/useRealtimeSync';
 import { AppIcon } from '../../../components/app-icon';
 import { Button, Loading, Screen } from '../../../components/ui';
 import { lotTone } from '../../../components/lot-card';
@@ -30,7 +29,6 @@ export default function MapScreen() {
     })();
   }, []);
 
-  useRealtimeSync('customer_map', ['parking_lots', 'parking_slots'], [['lots']]);
   const { data: lots, isLoading } = useQuery({ queryKey: ['lots'], queryFn: fetchActiveLots });
 
   // Always read the selected lot from live data so the sheet updates when a sensor changes.
